@@ -61,7 +61,7 @@ def create_inputs(json_path, plm, max_len, is_train, language):
                        "input_type_ids": input_type_ids,
                        "sentence_ids": sentence_ids}
 
-        return model_input, customer_labels, helpdesk_labels, quality_labels
+        return model_input, customer_labels, helpdesk_labels, quality_labels, len(processor.tokenizer)
 
 
 def _pad_sequence(data, pad_id, width=-1):
@@ -79,15 +79,17 @@ def _pad_labels(data, pad_label, width=-1):
 
     for label in data:
         padding_length = width - len(label)
-        for _ in range(padding_length):
-            pad_label = np.append(label, pad_label, axis=0)
-            label = pad_label
-        pad_labels.append(label)
+        # print(label)
 
-    return pad_labels
+        new_label = label + list(pad_label for _ in range(padding_length))
+        # print(new_label)
+
+        pad_labels.append(new_label)
+
+    return pad_labels, width
 
 
-def create_dataset(inputs, task, shuffle_buffer_size, batch_size=32):
+def create_dataset(inputs, task, shuffle_buffer_size=10000, batch_size=32):
     pre_sentence_ids = inputs[0]["sentence_ids"]
     pre_customer_labels = inputs[1]
     pre_helpdesk_labels = inputs[2]
@@ -108,12 +110,12 @@ def create_dataset(inputs, task, shuffle_buffer_size, batch_size=32):
                 x[j] = 0
         sentence_mask.append(mask)
 
-    customer_label_pad = np.array([[0, 0, 0, 0, 1]])
-    helpdesk_label_pad = np.array([[0, 0, 0, 1]])
+    customer_label_pad = np.array([0., 0., 0., 0., 1.])
+    helpdesk_label_pad = np.array([0., 0., 0., 1.])
     quality_label_pad = []
 
-    customer_labels, _ = _pad_labels(pre_customer_labels, customer_label_pad)
-    helpdesk_labels, _ = _pad_labels(pre_helpdesk_labels, helpdesk_label_pad)
+    customer_labels, customer_turns = _pad_labels(pre_customer_labels, customer_label_pad)
+    helpdesk_labels, helpdesk_turns = _pad_labels(pre_helpdesk_labels, helpdesk_label_pad)
 
     # multiple input & output dataset
     input_ids = inputs[0]["input_ids"]
@@ -122,14 +124,15 @@ def create_dataset(inputs, task, shuffle_buffer_size, batch_size=32):
 
     if task == "nugget":
         assert len(sentence_ids[0]) == len(sentence_mask[0]) == (len(customer_labels[0]) + len(helpdesk_labels[0]))
+
         dataset = tf.data.Dataset.from_tensor_slices(
-            (
-                {"input_ids": input_ids, "input_mask": input_mask, "input_type_ids": input_type_ids,
-                 "sentence_ids": sentence_ids, "sentence_masks": sentence_mask},
-                {"customer_labels": customer_labels, "helpdesk_labels": helpdesk_labels}
-            )
+            {
+                "input_ids": input_ids, "input_mask": input_mask, "input_type_ids":input_type_ids,
+                "sentence_ids": sentence_ids, "sentence_masks": sentence_mask,
+                "customer_labels": customer_labels, "helpdesk_labels": helpdesk_labels
+            }
         )
-        dataset = dataset.shuffle(buffer_size=10000).batch(32)
+        dataset = dataset.shuffle(buffer_size=shuffle_buffer_size).batch(32)
 
     elif task == "quality":
         return []
@@ -137,4 +140,4 @@ def create_dataset(inputs, task, shuffle_buffer_size, batch_size=32):
     else:
         raise ValueError("Task not in (nugget, quality)")
 
-    return dataset.batch(32)
+    return dataset, max_turn_number

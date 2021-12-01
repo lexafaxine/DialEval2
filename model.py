@@ -5,7 +5,6 @@ from transformers import BertTokenizer, TFBertModel, BertConfig, XLNetTokenizer,
     TFAutoModel
 from eval_func import normalize
 from math import log2
-import neural_structured_learning as nsl
 from scipy import stats
 
 
@@ -57,14 +56,16 @@ class TransformerEncoderLayer(layers.Layer):
         self.layernorm1 = layers.LayerNormalization(epsilon=1e-6)
         self.layernorm2 = layers.LayerNormalization(epsilon=1e-6)
 
-        self.dropout = layers.Dropout(rate)
+        self.dropout1 = layers.Dropout(rate)
+        self.dropout2 = layers.Dropout(rate)
 
     def call(self, x, training, mask):
         attn_output = self.mha(x, x, x, attention_mask=mask)  # (batch_size, input_seq_len, d_model)
+        attn_output = self.dropout1(attn_output, training=training)
         out1 = self.layernorm1(x + attn_output)  # (batch_size, input_seq_len, d_model)
 
         ffn_output = self.ffn(out1)  # (batch_size, input_seq_len, d_model)
-        ffn_output = self.dropout(ffn_output, training=training)
+        ffn_output = self.dropout2(ffn_output, training=training)
 
         out2 = self.layernorm2(out1 + ffn_output)  # (batch_size, input_seq_len, d_model)
         return out2
@@ -76,7 +77,7 @@ class TransformerEncoder(layers.Layer):
     2. Positional Encoding
     3. N encoder layers"""
 
-    def __init__(self, d_model, num_heads, d_ff, maximum_position_encoding, rate=0.1, num_layers=2):
+    def __init__(self, d_model, num_heads, d_ff, maximum_position_encoding=10000, rate=0.1, num_layers=2):
         super(TransformerEncoder, self).__init__()
         self.d_model = d_model
         self.num_layers = num_layers
@@ -88,21 +89,98 @@ class TransformerEncoder(layers.Layer):
 
     def call(self, x, training, mask):
         seq_len = tf.shape(x)[1]
-        x *= tf.math.sqrt(tf.cast(self.d_model, tf.float32))
         x += self.pos_encoding[:, :seq_len, :]
 
         x = self.dropout(x, training=training)
 
-        for i in range(self.num_layers):
-            x = self.enc_layers[i](x, training, mask)
+        mask = tf.cast(tf.math.equal(mask, 0), tf.float32)
+        sentence_masks = mask[:, tf.newaxis, tf.newaxis, :]  # (batch_size, 1, 1, seq_len)
 
-        return x  # (batch_size, input_seq_len, d_model)
+        for i in range(self.num_layers):
+            x = self.enc_layers[i](x, training, sentence_masks)  # (batch_size, input_seq_len, d_model)
+
+        return x
+
+
+class CustomDense(layers.Layer):
+    """Get custom and helpdesk label's indices
+       A multi output model"""
+
+    def __init__(self, customer_dim, helpdesk_dim, max_turn_number, name=None):
+        super(CustomDense, self).__init__()
+        self.customer_dense = layers.Dense(customer_dim, activation='relu')
+        self.helpdesk_dense = layers.Dense(helpdesk_dim, activation='relu')
+        # assume order is [customer, helpdesk, customer, ...]
+        self.customer_indices = tf.range(start=0, delta=2, limit=max_turn_number)
+        self.helpdesk_indices = tf.range(start=1, delta=2, limit=max_turn_number)
+
+        self.max_turn_number = max_turn_number
+
+    def call(self, x, mask):
+        customer_output = tf.gather(x, indices=self.customer_indices, axis=1)
+        helpdesk_output = tf.gather(x, indices=self.helpdesk_indices, axis=1)
+        assert_op = tf.debugging.assert_equal(tf.shape(customer_output)[1] + tf.shape(helpdesk_output)[1],
+                                              self.max_turn_number)
+        customer_mask = tf.cast(tf.gather(mask, axis=1, indices=self.customer_indices), dtype=tf.float32)
+        helpdesk_mask = tf.cast(tf.gather(mask, axis=1, indices=self.helpdesk_indices), dtype=tf.float32)
+
+        customer_logits = self.customer_dense(customer_output) * customer_mask[:, :, None]
+        helpdesk_logits = self.helpdesk_dense(helpdesk_output) * helpdesk_mask[:, :, None]
+
+        return customer_logits, helpdesk_logits
+
+
+class CustomSoftmax(layers.Layer):
+
+    def __init__(self, max_turn_number, name=None):
+        super(CustomSoftmax, self).__init__()
+        self.customer_indices = tf.range(start=0, delta=2, limit=max_turn_number)
+        self.helpdesk_indices = tf.range(start=1, delta=2, limit=max_turn_number)
+
+        self.max_turn_number = max_turn_number
+
+    def call(self, inputs, mask):
+        customer_logits = inputs["customer_logits"]
+        helpdesk_logits = inputs["helpdesk_logits"]
+        customer_labels = inputs["customer_labels"]
+        helpdesk_labels = inputs["helpdesk_labels"]
+
+        customer_loss = tf.nn.softmax_cross_entropy_with_logits(customer_labels, customer_logits, axis=-1)
+        helpdesk_loss = tf.nn.softmax_cross_entropy_with_logits(helpdesk_labels, helpdesk_logits, axis=-1)
+
+        customer_mask = tf.cast(tf.gather(mask, axis=1, indices=self.customer_indices), dtype=tf.float32)
+        helpdesk_mask = tf.cast(tf.gather(mask, axis=1, indices=self.helpdesk_indices), dtype=tf.float32)
+
+        customer_loss = tf.reduce_sum(customer_loss * customer_mask[:, :, None], axis=-1)
+        helpdesk_loss = tf.reduce_sum(helpdesk_loss * helpdesk_mask[:, :, None], axis=-1)
+        self.add_loss(tf.reduce_mean(customer_loss) + tf.reduce_mean(helpdesk_loss))
+
+        customer_prob = tf.nn.softmax(customer_logits, axis=-1)
+        helpdesk_prob = tf.nn.softmax(helpdesk_logits, axis=-1)
+
+        # validate
+        cust_squared_error = tf.reduce_sum(tf.math.squared_difference(customer_prob, customer_labels), axis=-1) / 2
+        help_squared_error = tf.reduce_sum(tf.math.squared_difference(helpdesk_prob, helpdesk_labels), axis=-1) / 2
+
+        customer_rnss = -tf.experimental.numpy.log2(tf.math.sqrt(cust_squared_error / 2)) * tf.cast(customer_mask, tf.float32)
+        helpdesk_rnss = -tf.experimental.numpy.log2(tf.math.sqrt(help_squared_error / 2)) * tf.cast(helpdesk_mask, tf.float32)
+
+        customer_turn = tf.math.count_nonzero(customer_rnss, axis=-1)
+        helpdesk_turn = tf.math.count_nonzero(helpdesk_rnss, axis=-1)
+
+        customer_rnss = tf.math.divide(tf.reduce_sum(customer_rnss, axis=-1), tf.cast(customer_turn, dtype=tf.float32))
+        helpdesk_rnss = tf.math.divide(tf.reduce_sum(helpdesk_rnss, axis=-1), tf.cast(helpdesk_turn, dtype=tf.float32))
+
+        rnss = (tf.reduce_mean(customer_rnss) + tf.reduce_mean(helpdesk_rnss)) / 2
+        self.add_metric(rnss, name="rnss")
+
+        return customer_prob, helpdesk_prob
 
 
 # bert and return the top_vec
 class Bert(layers.Layer):
 
-    def __init__(self, language):
+    def __init__(self, language, embedding_size):
         super(Bert, self).__init__()
         # Load Transformers config
         if language == "Chinese":
@@ -121,23 +199,34 @@ class Bert(layers.Layer):
 
         # Load the Transformes BERT model
         self.model = TFBertModel.from_pretrained(bert_name, config=self.config)
+        self.model.resize_token_embeddings(embedding_size)
 
     def call(self, inputs):
-        # inputs = [input_ids, input_mask, input_type_ids, dialogue_length, turn_number, labels]
+        # inputs = [input_ids, input_mask, input_type_ids, sentence_ids, sentence_mask]
 
-        input_ids = inputs[0]
-        input_mask = inputs[1]
-        input_type_ids = inputs[2]
+        input_ids = inputs["input_ids"]
+        input_mask = inputs["input_mask"]
+        input_type_ids = inputs["input_type_ids"]
         outputs = self.model(input_ids=input_ids, attention_mask=input_mask, token_type_ids=input_type_ids,
                              training=True)
-        x = outputs["pooler_output"]
+        x = outputs["last_hidden_state"]
+        x *= tf.math.sqrt(tf.cast(768, tf.float32))
         check_nan(x, name="bert_output")
-        return x
+
+        sentence_ids = inputs["sentence_ids"]
+        sentence_masks = inputs["sentence_masks"]
+
+        sents_vec = tf.gather(x, indices=sentence_ids, batch_dims=1)
+        sents_vec = sents_vec * tf.cast(sentence_masks[:, :, None], dtype=tf.float32)
+
+        check_nan(sents_vec, name="sentence vec")
+
+        return sents_vec
 
 
 class XLNet(layers.Layer):
 
-    def __init__(self, language):
+    def __init__(self, language, embedding_size):
         super(XLNet, self).__init__()
         if language == "English":
             self.tokenizer = XLNetTokenizer.from_pretrained('xlnet-base-cased')
@@ -149,18 +238,27 @@ class XLNet(layers.Layer):
         else:
             raise ValueError("Language must be English or Chinese!")
 
+        self.model.resize_token_embeddings(embedding_size)
+
     def call(self, inputs):
-        input_ids = inputs[0]
-        input_mask = inputs[1]
-        input_type_ids = inputs[2]
+        # inputs = [input_ids, input_mask, input_type_ids, sentence_ids, sentence_mask]
+        input_ids = inputs["input_ids"]
+        input_mask = inputs["input_mask"]
+        input_type_ids = inputs["input_type_ids"]
         outputs = self.model(input_ids=input_ids, attention_mask=input_mask, token_type_ids=input_type_ids)
         x = outputs.last_hidden_state
-
-        x = tf.reduce_mean(x, axis=1)
+        x *= tf.math.sqrt(tf.cast(768, tf.float32))
 
         check_nan(x, name="xlnet_output")
+        sentence_ids = inputs["sentence_ids"]
+        sentence_masks = inputs["sentence_masks"]
 
-        return x
+        sents_vec = tf.gather(x, indices=sentence_ids, batch_dims=1)
+        sents_vec = sents_vec * tf.cast(sentence_masks, dtype=tf.float32)
+
+        check_nan(sents_vec, name="sentence vec")
+
+        return sents_vec
 
 
 class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
@@ -179,86 +277,61 @@ class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
         return tf.math.rsqrt(self.d_model) * tf.math.minimum(arg1, arg2)
 
 
-def create_sentence_model(plm_name, language, sender, max_len, hidden_size, rnn_dropout=0.1, warmup=1200):
-    # an attention-based bilstm model
-
+def create_dialogue_model(plm_name, language, max_turn_number, embedding_size,
+                          max_len=512, hidden_size=768, ff_size=2048, heads=8, layer_num=2, dropout=0.1):
     if plm_name == "BERT":
-        plm = Bert(language=language)
+        plm = Bert(language=language, embedding_size=embedding_size)
 
     elif plm_name == "XLNet":
-        plm = XLNet(language=language)
+        plm = XLNet(language=language, embedding_size=embedding_size)
 
     else:
-        plm = None
-        raise ValueError("Pretrained model name should be specified: XLNet or BERT")
+        raise ValueError("plm not in (BERT, XLNet)")
+
+    encoder = TransformerEncoder(d_model=hidden_size, num_heads=heads, d_ff=ff_size, rate=dropout, num_layers=layer_num)
+    custom_dense = CustomDense(customer_dim=5, helpdesk_dim=4, max_turn_number=max_turn_number, name="customer dense")
+    custom_softmax = CustomSoftmax(max_turn_number=max_turn_number, name="custom Softmax")
+
+    if max_turn_number % 2 == 1:
+        customer_turn = max_turn_number // 2 + 1
+        helpdesk_turn = max_turn_number // 2
+    else:
+        customer_turn = max_turn_number // 2
+        helpdesk_turn = max_turn_number // 2
 
     # define inputs
     input_ids = tf.keras.Input(shape=(max_len,), dtype=tf.int32, name="input_ids")
     input_mask = tf.keras.Input(shape=(max_len,), dtype=tf.int32, name="input_mask")
     input_type_ids = tf.keras.Input(shape=(max_len,), dtype=tf.int32, name="input_type_ids")
-    dialogue_length = tf.keras.Input(shape=(), dtype=tf.int32, name="dialogue_length")
-    turn_number = tf.keras.Input(shape=(), dtype=tf.int32, name="turn_number")
+    sentence_ids = tf.keras.Input(shape=(max_turn_number,), dtype=tf.int32, name="sentence_ids")
+    sentence_masks = tf.keras.Input(shape=(max_turn_number,), dtype=tf.int32, name="sentence_masks")
+    customer_labels = tf.keras.Input(shape=(customer_turn, 5), dtype=tf.float32, name="customer_labels")
+    helpdesk_labels = tf.keras.Input(shape=(helpdesk_turn, 4), dtype=tf.float32, name="helpdesk_labels")
 
-    if sender == "customer":
-        # labels = tf.keras.layers.Input(shape=(4,), dtype=tf.float32, name="labels")
-        dense_dim = 4
-    elif sender == "helpdesk":
-        # labels = tf.keras.layers.Input(shape=(3,), dtype=tf.float32, name="labels")
-        dense_dim = 3
-    else:
-
-        dense_dim = 0
-        raise ValueError("sender must be customer or helpdesk")
-
-    inputs = [input_ids, input_mask, input_type_ids, dialogue_length, turn_number]
+    inputs = [input_ids, input_mask, input_type_ids, sentence_ids, sentence_masks, customer_labels, helpdesk_labels]
 
     # define graph
-    plm_output = plm(inputs)  # [Batch, max_len, hidden_size]
-    dropout_output = tf.keras.layers.Dropout(0.1)(plm_output)
-    dense_output = tf.keras.layers.Dense(dense_dim, activation="relu", name="classification")(dropout_output)
 
-    # keras.utils.plot_model(model, "my_first_model_with_shape_info.png", show_shapes=True)
+    plm_inputs = {
+        "input_ids": input_ids, "input_mask": input_mask, "input_type_ids": input_type_ids,
+        "sentence_ids": sentence_ids, "sentence_masks": sentence_masks
+    }
+    sents_vec = plm(inputs=plm_inputs)  # [Batch, max_turn_number, hidden_size]
+    sents_vec = encoder(x=sents_vec, training=True, mask=sentence_masks)
 
-    def custom_loss(y_true, y_pred):
-        return tf.nn.softmax_cross_entropy_with_logits(y_true, y_pred, axis=-1)
+    customer_logits, helpdesk_logits = custom_dense(sents_vec, mask=sentence_masks)
 
-    def rnss(y_true, y_pred):
-        check_nan(y_pred, name="dense_output")
-        pred = tf.nn.softmax(y_pred, axis=-1).numpy()
-        truth = y_true.numpy()
+    softmax_inputs = {
+        "customer_logits": customer_logits, "helpdesk_logits": helpdesk_logits,
+        "customer_labels": customer_labels, "helpdesk_labels": helpdesk_labels
+    }
+    customer_prob, helpdesk_prob = custom_softmax(softmax_inputs, mask=sentence_masks)
 
-        def squared_error(pred, truth):
-            return ((pred - truth) ** 2).sum()
+    outputs = [customer_prob, helpdesk_prob]
 
-        pred, truth = normalize(pred, truth)
-        return -log2(np.sqrt(squared_error(pred, truth) / 2))
-
-    def jsd(y_true, y_pred, base=2):
-        pred = tf.nn.softmax(y_pred, axis=-1).numpy()
-        truth = y_true.numpy()
-        m = 1. / 2 * (pred + truth)
-        return (stats.entropy(pred, m, base=base)
-                + stats.entropy(truth, m, base=base)) / 2.
-
-    # define opt and loss
-    # opt = tf.keras.optimizers.Adam(beta_1=0.9, beta_2=0.999, lr=1e-
-
-    # 768: output hidden size of BERT
-    learning_rate = CustomSchedule(d_model=768, warmup_steps=warmup)
-
-    optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98,
-                                         epsilon=1e-9)
     opt = tf.keras.optimizers.Adam(beta_1=0.9, beta_2=0.98, lr=1e-5)
-    model = tf.keras.Model(inputs=inputs, outputs=dense_output, name="BertND")
-    model.compile(
-        optimizer=optimizer,
-        loss=custom_loss,
-        run_eagerly=True,
-        metrics=[rnss]
-    )
+
+    model = tf.keras.Model(inputs=inputs, outputs=outputs, name="dialogue nugget")
+    model.compile(optimizer=opt, run_eagerly=True)
 
     return model
-
-
-def create_dialogue_model(plm_name, max_len, hidden_size, ff_size, heads, dropout, language):
-    pass

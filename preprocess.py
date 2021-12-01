@@ -95,7 +95,7 @@ def truncator(tokenized_dialogue, sep_token):
     truncated_dialogue = []
 
     for utterance in tokenized_dialogue:
-        utterance = utterance[:max_utterance_len-1]
+        utterance = utterance[:max_utterance_len - 1]
         utterance.append(sep_token)
         truncated_dialogue.append(utterance)
         length_now += len(utterance)
@@ -219,7 +219,6 @@ class Processor(object):
 
         if segments_ids == []:
             print(dialogue_id, tokenized_dialogue)
-
 
         if padding_length > 0:
             dialogue_idxs = dialogue_idxs + ([self.pad_vid] * padding_length)
