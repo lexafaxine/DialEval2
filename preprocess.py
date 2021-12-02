@@ -90,7 +90,7 @@ def parse_quality(annotations):
 
 def truncator(tokenized_dialogue, sep_token):
     turn_number = len(tokenized_dialogue)
-    max_utterance_len = 512 // turn_number
+    max_utterance_len = 256 // turn_number
 
     length_now = 0
 
@@ -101,7 +101,7 @@ def truncator(tokenized_dialogue, sep_token):
         utterance.append(sep_token)
         truncated_dialogue.append(utterance)
         length_now += len(utterance)
-    assert length_now <= 512
+    assert length_now <= 256
 
     return truncated_dialogue
 
@@ -186,7 +186,7 @@ class Processor(object):
             dialogue_length += len(utterance_token)
             tokenized_dialogue.append(utterance_token)
 
-        if dialogue_length > 512:
+        if dialogue_length > 256:
             # max length of bert and xlnet
             sep_token = "[SEP]" if self.plm == "BERT" else "<sep>"
             tokenized_dialogue = truncator(tokenized_dialogue, sep_token)
@@ -216,8 +216,8 @@ class Processor(object):
 
         # pad input
 
-        padding_length = 512 - len(dialogue_idxs)
-        input_mask = [0] * 512
+        padding_length = 256 - len(dialogue_idxs)
+        input_mask = [0] * 256
 
         if segments_ids == []:
             print(dialogue_id, tokenized_dialogue)
@@ -228,7 +228,7 @@ class Processor(object):
                 segments_ids = segments_ids + ([0] * padding_length)
             else:
                 segments_ids = segments_ids + ([1] * padding_length)
-        for j in range(512):
+        for j in range(256):
             if dialogue_idxs[j] != self.pad_vid:
                 input_mask[j] = 1
 

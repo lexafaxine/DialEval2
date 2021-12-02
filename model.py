@@ -282,7 +282,7 @@ class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
 
 
 def create_dialogue_model(plm_name, language, max_turn_number, embedding_size=0,
-                          max_len=512, hidden_size=768, ff_size=200, heads=8, layer_num=1, dropout=0.1):
+                          max_len=256, hidden_size=768, ff_size=200, heads=8, layer_num=1, dropout=0.1):
     tf.keras.backend.set_floatx('float16')
     if plm_name == "BERT":
         plm = Bert(language=language, embedding_size=embedding_size)
