@@ -161,17 +161,17 @@ class CustomSoftmax(layers.Layer):
         # validate
         cust_squared_error = tf.reduce_sum(tf.math.squared_difference(customer_prob, customer_labels), axis=-1) / 2
         help_squared_error = tf.reduce_sum(tf.math.squared_difference(helpdesk_prob, helpdesk_labels), axis=-1) / 2
-        check_nan(cust_squared_error, name="cust_squared_error")
-        check_nan(help_squared_error, name="help_squared_error")
+        # check_nan(cust_squared_error, name="cust_squared_error")
+        # check_nan(help_squared_error, name="help_squared_error")
 
         customer_rnss = -tf.experimental.numpy.log2(tf.math.sqrt(cust_squared_error / 2)) * tf.cast(customer_mask, tf.float16)
         helpdesk_rnss = -tf.experimental.numpy.log2(tf.math.sqrt(help_squared_error / 2)) * tf.cast(helpdesk_mask, tf.float16)
-        check_nan(customer_rnss, name="rnss11")
-        check_nan(helpdesk_rnss, name="rnss12")
+        # check_nan(customer_rnss, name="rnss11")
+        # check_nan(helpdesk_rnss, name="rnss12")
         customer_turn = tf.math.count_nonzero(customer_rnss, axis=-1)
         helpdesk_turn = tf.math.count_nonzero(helpdesk_rnss, axis=-1)
-        check_nan(customer_turn, name="rnss21")
-        check_nan(helpdesk_turn, name="rnss22")
+        # check_nan(customer_turn, name="rnss21")
+        # check_nan(helpdesk_turn, name="rnss22")
         customer_rnss = tf.math.divide(tf.reduce_sum(customer_rnss, axis=-1), tf.cast(customer_turn, dtype=tf.float16))
         helpdesk_rnss = tf.math.divide(tf.reduce_sum(helpdesk_rnss, axis=-1), tf.cast(helpdesk_turn, dtype=tf.float16))
 
@@ -215,7 +215,7 @@ class Bert(layers.Layer):
                              training=True)
         x = outputs["last_hidden_state"]
         x *= tf.math.sqrt(tf.cast(768, tf.float16))
-        check_nan(x, name="bert_output")
+        # check_nan(x, name="bert_output")
 
         sentence_ids = inputs["sentence_ids"]
         sentence_masks = inputs["sentence_masks"]
@@ -223,7 +223,7 @@ class Bert(layers.Layer):
         sents_vec = tf.gather(x, indices=sentence_ids, batch_dims=1)
         sents_vec = sents_vec * tf.cast(sentence_masks[:, :, None], dtype=tf.float16)
 
-        check_nan(sents_vec, name="sentence vec")
+        # check_nan(sents_vec, name="sentence vec")
 
         return sents_vec
 

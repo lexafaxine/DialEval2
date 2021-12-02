@@ -64,7 +64,7 @@ def create_inputs(json_path, plm, max_len, is_train, language, task):
                 }
 
 
-def create_dataset(data, task, shuffle_buffer_size=200, batch_size=32):
+def create_dataset(data, task, shuffle_buffer_size=200, batch_size=16):
 
     if task == "nugget":
         dataset = tf.data.Dataset.from_generator(
@@ -78,7 +78,7 @@ def create_dataset(data, task, shuffle_buffer_size=200, batch_size=32):
                            "helpdesk_labels": tf.float32})
         )
 
-        dataset = dataset.shuffle(shuffle_buffer_size).batch(batch_size=batch_size)
+        dataset = dataset.shuffle(shuffle_buffer_size).batch(batch_size=16)
 
         return dataset
 
