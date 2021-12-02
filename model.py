@@ -199,7 +199,7 @@ class Bert(layers.Layer):
 
         # Load the Transformes BERT model
         self.model = TFBertModel.from_pretrained(bert_name, config=self.config)
-        self.model.resize_token_embeddings(embedding_size)
+        # self.model.resize_token_embeddings(embedding_size)
 
     def call(self, inputs):
         # inputs = [input_ids, input_mask, input_type_ids, sentence_ids, sentence_mask]
@@ -277,7 +277,7 @@ class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
         return tf.math.rsqrt(self.d_model) * tf.math.minimum(arg1, arg2)
 
 
-def create_dialogue_model(plm_name, language, max_turn_number, embedding_size,
+def create_dialogue_model(plm_name, language, max_turn_number, embedding_size=0,
                           max_len=512, hidden_size=768, ff_size=2048, heads=8, layer_num=2, dropout=0.1):
     if plm_name == "BERT":
         plm = Bert(language=language, embedding_size=embedding_size)
@@ -289,7 +289,7 @@ def create_dialogue_model(plm_name, language, max_turn_number, embedding_size,
         raise ValueError("plm not in (BERT, XLNet)")
 
     encoder = TransformerEncoder(d_model=hidden_size, num_heads=heads, d_ff=ff_size, rate=dropout, num_layers=layer_num)
-    custom_dense = CustomDense(customer_dim=5, helpdesk_dim=4, max_turn_number=max_turn_number, name="customer dense")
+    custom_dense = CustomDense(customer_dim=4, helpdesk_dim=3, max_turn_number=max_turn_number, name="customer dense")
     custom_softmax = CustomSoftmax(max_turn_number=max_turn_number, name="custom Softmax")
 
     if max_turn_number % 2 == 1:
@@ -305,8 +305,8 @@ def create_dialogue_model(plm_name, language, max_turn_number, embedding_size,
     input_type_ids = tf.keras.Input(shape=(max_len,), dtype=tf.int32, name="input_type_ids")
     sentence_ids = tf.keras.Input(shape=(max_turn_number,), dtype=tf.int32, name="sentence_ids")
     sentence_masks = tf.keras.Input(shape=(max_turn_number,), dtype=tf.int32, name="sentence_masks")
-    customer_labels = tf.keras.Input(shape=(customer_turn, 5), dtype=tf.float32, name="customer_labels")
-    helpdesk_labels = tf.keras.Input(shape=(helpdesk_turn, 4), dtype=tf.float32, name="helpdesk_labels")
+    customer_labels = tf.keras.Input(shape=(customer_turn, 4), dtype=tf.float32, name="customer_labels")
+    helpdesk_labels = tf.keras.Input(shape=(helpdesk_turn, 3), dtype=tf.float32, name="helpdesk_labels")
 
     inputs = [input_ids, input_mask, input_type_ids, sentence_ids, sentence_masks, customer_labels, helpdesk_labels]
 

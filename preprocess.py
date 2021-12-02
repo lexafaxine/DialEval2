@@ -7,8 +7,8 @@ from itertools import chain
 
 # split custom labels and helpdesk labels to train separately in sentence level
 
-CUSTOMER_NUGGET_TYPES_WITH_PAD = ('CNUG0', 'CNUG', 'CNUG*', 'CNaN', 'PAD')
-HELPDESK_NUGGET_TYPES_WITH_PAD = ('HNUG', 'HNUG*', 'HNaN', 'PAD')
+CUSTOMER_NUGGET_TYPES = ('CNUG0', 'CNUG', 'CNUG*', 'CNaN')
+HELPDESK_NUGGET_TYPES = ('HNUG', 'HNUG*', 'HNaN')
 MAX_TURN_NUMBER = 7
 C_NUGGET_TYPES_TO_INDEX = {
     "PAD": 0,
@@ -28,13 +28,15 @@ H_NUGGET_TYPES_TO_INDEX = {
 
 
 class DialogueData(object):
-    def __init__(self, dialogue_id, input_ids, input_mask, input_type_ids, sentence_ids, customer_labels,
+    def __init__(self, dialogue_id, input_ids, input_mask, input_type_ids, sentence_ids, sentence_masks,
+                 customer_labels,
                  helpdesk_labels, quality_labels):
         self.dialogue_id = dialogue_id
         self.input_ids = input_ids
         self.input_mask = input_mask
         self.input_type_ids = input_type_ids
         self.sentence_ids = sentence_ids
+        self.sentence_masks = sentence_masks
         self.customer_labels = customer_labels
         self.helpdesk_labels = helpdesk_labels
         self.quality_labels = quality_labels
@@ -48,7 +50,7 @@ def parse_nugget(annotations, dialogue_length):
 
     for i in range(0, dialogue_length, 2):
         # deal with customer annotations
-        nugget_types = CUSTOMER_NUGGET_TYPES_WITH_PAD
+        nugget_types = CUSTOMER_NUGGET_TYPES
 
         c_nuggets = [h[i] for h in [anno["nugget"] for anno in annotations]]
         count = Counter(c_nuggets)
@@ -64,7 +66,7 @@ def parse_nugget(annotations, dialogue_length):
 
     for i in range(1, dialogue_length, 2):
         # deal with helpdesk annotations
-        nugget_types = HELPDESK_NUGGET_TYPES_WITH_PAD
+        nugget_types = HELPDESK_NUGGET_TYPES
 
         h_nuggets = [h[i] for h in [anno["nugget"] for anno in annotations]]
         count = Counter(h_nuggets)
@@ -138,9 +140,9 @@ class Processor(object):
         self.trn_tokens = ["[trn1]", "[trn2]", "[trn3]", "[trn4]", "[trn5]", "[trn6]"]
         self.sdr_tokens = ["[customer]", "[helpdesk]"]
 
-        self.tokenizer.add_tokens(self.len_tokens, special_tokens=True)
-        self.tokenizer.add_tokens(self.trn_tokens, special_tokens=True)
-        self.tokenizer.add_tokens(self.sdr_tokens, special_tokens=True)
+        # self.tokenizer.add_tokens(self.len_tokens, special_tokens=True)
+        # self.tokenizer.add_tokens(self.trn_tokens, special_tokens=True)
+        # self.tokenizer.add_tokens(self.sdr_tokens, special_tokens=True)
 
     def process_dialogue(self, dialogue, mode, task):
 
@@ -170,11 +172,11 @@ class Processor(object):
             utterance = " ".join(turns[i]["utterances"])
             utterance_token = self.tokenizer.tokenize(utterance)
             # cls, sep, len, trn
-            len_token = self.len_tokens[turn_number - 1]
-            trn_token = self.trn_tokens[i // 2]
-            sdr_token = self.sdr_tokens[0] if i % 2 == 0 else self.sdr_tokens[1]
-
-            utterance_token = [len_token] + [trn_token] + [sdr_token] + utterance_token
+            # len_token = self.len_tokens[turn_number - 1]
+            # trn_token = self.trn_tokens[i // 2]
+            # sdr_token = self.sdr_tokens[0] if i % 2 == 0 else self.sdr_tokens[1]
+            #
+            # utterance_token = [len_token] + [trn_token] + [sdr_token] + utterance_token
 
             if self.plm == "BERT":
                 utterance_token = ['[CLS]'] + utterance_token + ['[SEP]']
@@ -230,7 +232,35 @@ class Processor(object):
             if dialogue_idxs[j] != self.pad_vid:
                 input_mask[j] = 1
 
+        # pad sentence ids
+        sentence_padding_length = MAX_TURN_NUMBER - turn_number
+        for i in range(sentence_padding_length):
+            sentence_ids.append(-1)
+
+        sentence_mask = [0] * MAX_TURN_NUMBER
+        for i in range(MAX_TURN_NUMBER):
+            if sentence_ids[i] != -1:
+                sentence_mask[i] = 1
+        for j in range(MAX_TURN_NUMBER):
+            if sentence_mask[j] == 0:
+                sentence_ids[j] = 0
+
+        # pad customer label
+        customer_max_turn = (MAX_TURN_NUMBER // 2) + 1 if MAX_TURN_NUMBER % 2 == 1 else MAX_TURN_NUMBER // 2
+        customer_padding_length = customer_max_turn - len(customer_labels)
+
+        for i in range(customer_padding_length):
+            customer_labels.append([1. / len(CUSTOMER_NUGGET_TYPES)] * len(CUSTOMER_NUGGET_TYPES))
+
+        helpdesk_max_turn = MAX_TURN_NUMBER // 2
+        helpdesk_padding_length = helpdesk_max_turn - len(helpdesk_labels)
+
+        for i in range(helpdesk_padding_length):
+            helpdesk_labels.append([1. / len(HELPDESK_NUGGET_TYPES)] * len(HELPDESK_NUGGET_TYPES))
+
+        assert len(sentence_ids) == (len(customer_labels) + len(helpdesk_labels)) == len(sentence_mask)
+
         return DialogueData(dialogue_id=dialogue_id, input_ids=dialogue_idxs, input_mask=input_mask,
                             input_type_ids=segments_ids, sentence_ids=sentence_ids,
                             customer_labels=customer_labels, helpdesk_labels=helpdesk_labels,
-                            quality_labels=quality_labels)
+                            quality_labels=quality_labels, sentence_masks=sentence_mask)
