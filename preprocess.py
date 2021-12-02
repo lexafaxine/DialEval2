@@ -28,7 +28,7 @@ H_NUGGET_TYPES_TO_INDEX = {
 
 
 class DialogueData(object):
-    def __init__(self, dialogue_id, input_ids, input_mask, input_type_ids, sentence_ids, sentence_masks,
+    def __init__(self, dialogue_id, input_ids, input_mask, input_type_ids, sentence_ids, sentence_mask,
                  customer_labels,
                  helpdesk_labels, quality_labels):
         self.dialogue_id = dialogue_id
@@ -36,7 +36,7 @@ class DialogueData(object):
         self.input_mask = input_mask
         self.input_type_ids = input_type_ids
         self.sentence_ids = sentence_ids
-        self.sentence_masks = sentence_masks
+        self.sentence_masks = sentence_mask
         self.customer_labels = customer_labels
         self.helpdesk_labels = helpdesk_labels
         self.quality_labels = quality_labels
@@ -258,9 +258,11 @@ class Processor(object):
         for i in range(helpdesk_padding_length):
             helpdesk_labels.append([1. / len(HELPDESK_NUGGET_TYPES)] * len(HELPDESK_NUGGET_TYPES))
 
+        print(len(sentence_ids), len(customer_labels), len(helpdesk_labels), len(sentence_mask))
+
         assert len(sentence_ids) == (len(customer_labels) + len(helpdesk_labels)) == len(sentence_mask)
 
         return DialogueData(dialogue_id=dialogue_id, input_ids=dialogue_idxs, input_mask=input_mask,
                             input_type_ids=segments_ids, sentence_ids=sentence_ids,
                             customer_labels=customer_labels, helpdesk_labels=helpdesk_labels,
-                            quality_labels=quality_labels, sentence_masks=sentence_mask)
+                            quality_labels=quality_labels, sentence_mask=sentence_mask)

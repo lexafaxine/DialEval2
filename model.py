@@ -34,7 +34,7 @@ def positional_encoding(position, d_model):
 
     pos_encoding = angle_rad[np.newaxis, ...]
 
-    return tf.cast(pos_encoding, dtype=tf.float32)
+    return tf.cast(pos_encoding, dtype=tf.float16)
 
 
 # point wise feed forward netword
@@ -93,7 +93,7 @@ class TransformerEncoder(layers.Layer):
 
         x = self.dropout(x, training=training)
 
-        mask = tf.cast(tf.math.equal(mask, 0), tf.float32)
+        mask = tf.cast(tf.math.equal(mask, 0), tf.float16)
         sentence_masks = mask[:, tf.newaxis, tf.newaxis, :]  # (batch_size, 1, 1, seq_len)
 
         for i in range(self.num_layers):
@@ -121,8 +121,8 @@ class CustomDense(layers.Layer):
         helpdesk_output = tf.gather(x, indices=self.helpdesk_indices, axis=1)
         assert_op = tf.debugging.assert_equal(tf.shape(customer_output)[1] + tf.shape(helpdesk_output)[1],
                                               self.max_turn_number)
-        customer_mask = tf.cast(tf.gather(mask, axis=1, indices=self.customer_indices), dtype=tf.float32)
-        helpdesk_mask = tf.cast(tf.gather(mask, axis=1, indices=self.helpdesk_indices), dtype=tf.float32)
+        customer_mask = tf.cast(tf.gather(mask, axis=1, indices=self.customer_indices), dtype=tf.float16)
+        helpdesk_mask = tf.cast(tf.gather(mask, axis=1, indices=self.helpdesk_indices), dtype=tf.float16)
 
         customer_logits = self.customer_dense(customer_output) * customer_mask[:, :, None]
         helpdesk_logits = self.helpdesk_dense(helpdesk_output) * helpdesk_mask[:, :, None]
@@ -148,8 +148,8 @@ class CustomSoftmax(layers.Layer):
         customer_loss = tf.nn.softmax_cross_entropy_with_logits(customer_labels, customer_logits, axis=-1)
         helpdesk_loss = tf.nn.softmax_cross_entropy_with_logits(helpdesk_labels, helpdesk_logits, axis=-1)
 
-        customer_mask = tf.cast(tf.gather(mask, axis=1, indices=self.customer_indices), dtype=tf.float32)
-        helpdesk_mask = tf.cast(tf.gather(mask, axis=1, indices=self.helpdesk_indices), dtype=tf.float32)
+        customer_mask = tf.cast(tf.gather(mask, axis=1, indices=self.customer_indices), dtype=tf.float16)
+        helpdesk_mask = tf.cast(tf.gather(mask, axis=1, indices=self.helpdesk_indices), dtype=tf.float16)
 
         customer_loss = tf.reduce_sum(customer_loss * customer_mask[:, :, None], axis=-1)
         helpdesk_loss = tf.reduce_sum(helpdesk_loss * helpdesk_mask[:, :, None], axis=-1)
@@ -161,15 +161,19 @@ class CustomSoftmax(layers.Layer):
         # validate
         cust_squared_error = tf.reduce_sum(tf.math.squared_difference(customer_prob, customer_labels), axis=-1) / 2
         help_squared_error = tf.reduce_sum(tf.math.squared_difference(helpdesk_prob, helpdesk_labels), axis=-1) / 2
+        check_nan(cust_squared_error, name="cust_squared_error")
+        check_nan(help_squared_error, name="help_squared_error")
 
-        customer_rnss = -tf.experimental.numpy.log2(tf.math.sqrt(cust_squared_error / 2)) * tf.cast(customer_mask, tf.float32)
-        helpdesk_rnss = -tf.experimental.numpy.log2(tf.math.sqrt(help_squared_error / 2)) * tf.cast(helpdesk_mask, tf.float32)
-
+        customer_rnss = -tf.experimental.numpy.log2(tf.math.sqrt(cust_squared_error / 2)) * tf.cast(customer_mask, tf.float16)
+        helpdesk_rnss = -tf.experimental.numpy.log2(tf.math.sqrt(help_squared_error / 2)) * tf.cast(helpdesk_mask, tf.float16)
+        check_nan(customer_rnss, name="rnss11")
+        check_nan(helpdesk_rnss, name="rnss12")
         customer_turn = tf.math.count_nonzero(customer_rnss, axis=-1)
         helpdesk_turn = tf.math.count_nonzero(helpdesk_rnss, axis=-1)
-
-        customer_rnss = tf.math.divide(tf.reduce_sum(customer_rnss, axis=-1), tf.cast(customer_turn, dtype=tf.float32))
-        helpdesk_rnss = tf.math.divide(tf.reduce_sum(helpdesk_rnss, axis=-1), tf.cast(helpdesk_turn, dtype=tf.float32))
+        check_nan(customer_turn, name="rnss21")
+        check_nan(helpdesk_turn, name="rnss22")
+        customer_rnss = tf.math.divide(tf.reduce_sum(customer_rnss, axis=-1), tf.cast(customer_turn, dtype=tf.float16))
+        helpdesk_rnss = tf.math.divide(tf.reduce_sum(helpdesk_rnss, axis=-1), tf.cast(helpdesk_turn, dtype=tf.float16))
 
         rnss = (tf.reduce_mean(customer_rnss) + tf.reduce_mean(helpdesk_rnss)) / 2
         self.add_metric(rnss, name="rnss")
@@ -210,14 +214,14 @@ class Bert(layers.Layer):
         outputs = self.model(input_ids=input_ids, attention_mask=input_mask, token_type_ids=input_type_ids,
                              training=True)
         x = outputs["last_hidden_state"]
-        x *= tf.math.sqrt(tf.cast(768, tf.float32))
+        x *= tf.math.sqrt(tf.cast(768, tf.float16))
         check_nan(x, name="bert_output")
 
         sentence_ids = inputs["sentence_ids"]
         sentence_masks = inputs["sentence_masks"]
 
         sents_vec = tf.gather(x, indices=sentence_ids, batch_dims=1)
-        sents_vec = sents_vec * tf.cast(sentence_masks[:, :, None], dtype=tf.float32)
+        sents_vec = sents_vec * tf.cast(sentence_masks[:, :, None], dtype=tf.float16)
 
         check_nan(sents_vec, name="sentence vec")
 
@@ -247,14 +251,14 @@ class XLNet(layers.Layer):
         input_type_ids = inputs["input_type_ids"]
         outputs = self.model(input_ids=input_ids, attention_mask=input_mask, token_type_ids=input_type_ids)
         x = outputs.last_hidden_state
-        x *= tf.math.sqrt(tf.cast(768, tf.float32))
+        x *= tf.math.sqrt(tf.cast(768, tf.float16))
 
         check_nan(x, name="xlnet_output")
         sentence_ids = inputs["sentence_ids"]
         sentence_masks = inputs["sentence_masks"]
 
         sents_vec = tf.gather(x, indices=sentence_ids, batch_dims=1)
-        sents_vec = sents_vec * tf.cast(sentence_masks, dtype=tf.float32)
+        sents_vec = sents_vec * tf.cast(sentence_masks, dtype=tf.float16)
 
         check_nan(sents_vec, name="sentence vec")
 
@@ -266,7 +270,7 @@ class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
         super(CustomSchedule, self).__init__()
 
         self.d_model = d_model
-        self.d_model = tf.cast(self.d_model, tf.float32)
+        self.d_model = tf.cast(self.d_model, tf.float16)
 
         self.warmup_steps = warmup_steps
 
@@ -278,7 +282,8 @@ class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
 
 
 def create_dialogue_model(plm_name, language, max_turn_number, embedding_size=0,
-                          max_len=512, hidden_size=768, ff_size=2048, heads=8, layer_num=2, dropout=0.1):
+                          max_len=512, hidden_size=768, ff_size=200, heads=8, layer_num=1, dropout=0.1):
+    tf.keras.backend.set_floatx('float16')
     if plm_name == "BERT":
         plm = Bert(language=language, embedding_size=embedding_size)
 
@@ -287,7 +292,6 @@ def create_dialogue_model(plm_name, language, max_turn_number, embedding_size=0,
 
     else:
         raise ValueError("plm not in (BERT, XLNet)")
-
     encoder = TransformerEncoder(d_model=hidden_size, num_heads=heads, d_ff=ff_size, rate=dropout, num_layers=layer_num)
     custom_dense = CustomDense(customer_dim=4, helpdesk_dim=3, max_turn_number=max_turn_number, name="customer dense")
     custom_softmax = CustomSoftmax(max_turn_number=max_turn_number, name="custom Softmax")
@@ -305,8 +309,8 @@ def create_dialogue_model(plm_name, language, max_turn_number, embedding_size=0,
     input_type_ids = tf.keras.Input(shape=(max_len,), dtype=tf.int32, name="input_type_ids")
     sentence_ids = tf.keras.Input(shape=(max_turn_number,), dtype=tf.int32, name="sentence_ids")
     sentence_masks = tf.keras.Input(shape=(max_turn_number,), dtype=tf.int32, name="sentence_masks")
-    customer_labels = tf.keras.Input(shape=(customer_turn, 4), dtype=tf.float32, name="customer_labels")
-    helpdesk_labels = tf.keras.Input(shape=(helpdesk_turn, 3), dtype=tf.float32, name="helpdesk_labels")
+    customer_labels = tf.keras.Input(shape=(customer_turn, 4), dtype=tf.float16, name="customer_labels")
+    helpdesk_labels = tf.keras.Input(shape=(helpdesk_turn, 3), dtype=tf.float16, name="helpdesk_labels")
 
     inputs = [input_ids, input_mask, input_type_ids, sentence_ids, sentence_masks, customer_labels, helpdesk_labels]
 
