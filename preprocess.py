@@ -258,7 +258,7 @@ class Processor(object):
         for i in range(helpdesk_padding_length):
             helpdesk_labels.append([1. / len(HELPDESK_NUGGET_TYPES)] * len(HELPDESK_NUGGET_TYPES))
 
-        print(len(sentence_ids), len(customer_labels), len(helpdesk_labels), len(sentence_mask))
+        # print(len(sentence_ids), len(customer_labels), len(helpdesk_labels), len(sentence_mask))
 
         assert len(sentence_ids) == (len(customer_labels) + len(helpdesk_labels)) == len(sentence_mask)
 

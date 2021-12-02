@@ -151,8 +151,8 @@ class CustomSoftmax(layers.Layer):
         customer_mask = tf.cast(tf.gather(mask, axis=1, indices=self.customer_indices), dtype=tf.float16)
         helpdesk_mask = tf.cast(tf.gather(mask, axis=1, indices=self.helpdesk_indices), dtype=tf.float16)
 
-        customer_loss = tf.reduce_sum(customer_loss * customer_mask[:, :, None], axis=-1)
-        helpdesk_loss = tf.reduce_sum(helpdesk_loss * helpdesk_mask[:, :, None], axis=-1)
+        customer_loss = tf.reduce_sum(customer_loss * customer_mask, axis=-1)
+        helpdesk_loss = tf.reduce_sum(helpdesk_loss * helpdesk_mask, axis=-1)
         self.add_loss(tf.reduce_mean(customer_loss) + tf.reduce_mean(helpdesk_loss))
 
         customer_prob = tf.nn.softmax(customer_logits, axis=-1)
