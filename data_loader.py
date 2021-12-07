@@ -64,23 +64,24 @@ def create_inputs(json_path, plm, max_len, is_train, language, task):
                 }
 
 
-def create_dataset(data, task, shuffle_buffer_size=200, batch_size=16):
-
+def create_dataset(json_path, plm, max_len, mode, language, task, shuffle_buffer_size=200, batch_size=16):
+    from functools import partial
     if task == "nugget":
-        dataset = tf.data.Dataset.from_generator(
-            lambda: (x for x in data),
-            output_types=({"input_ids": tf.int32,
-                           "input_mask": tf.int32,
-                           "input_type_ids": tf.int32,
-                           "sentence_ids": tf.int32,
-                           "sentence_masks": tf.int32,
-                           "customer_labels": tf.float32,
-                           "helpdesk_labels": tf.float32})
-        )
+        if mode == "train" or "validate":
+            dataset = tf.data.Dataset.from_generator(
+                partial(create_inputs, json_path, plm, max_len, True, language, task),
+                output_types=({"input_ids": tf.int32,
+                               "input_mask": tf.int32,
+                               "input_type_ids": tf.int32,
+                               "sentence_ids": tf.int32,
+                               "sentence_masks": tf.int32,
+                               "customer_labels": tf.float32,
+                               "helpdesk_labels": tf.float32}),
+            )
 
-        dataset = dataset.shuffle(shuffle_buffer_size).batch(batch_size=16)
+            dataset = dataset.shuffle(shuffle_buffer_size).batch(batch_size=batch_size).repeat()
 
-        return dataset
+            return dataset
 
     elif task == "quality":
         return []

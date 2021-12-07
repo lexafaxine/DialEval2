@@ -129,12 +129,12 @@ class Processor(object):
                 self.tokenizer = AutoTokenizer.from_pretrained("hfl/chinese-xlnet-base")
             else:
                 self.tokenizer = XLNetTokenizer.from_pretrained('xlnet-base-cased')
-        elif self.plm == "DistilBert":
-            pass
-
             self.pad_vid = self.tokenizer.convert_tokens_to_ids('<pad>')
             self.sep_vid = self.tokenizer.convert_tokens_to_ids('<sep>')
             self.cls_vid = self.tokenizer.convert_tokens_to_ids('<cls>')
+
+        else:
+            raise ValueError("xxxxxxx")
 
         self.len_tokens = ["[len1]", "[len2]", "[len3]", "[len4]", "[len5]", "[len6]", "[len7]", "[len8]"]
         self.trn_tokens = ["[trn1]", "[trn2]", "[trn3]", "[trn4]", "[trn5]", "[trn6]"]
