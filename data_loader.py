@@ -34,6 +34,42 @@ def transfer_example_to_input(example, is_test=False):
     return inputs
 
 
+def create_predict_inputs(json_path, plm, max_len, language, task):
+    processor = Processor(plm=plm, max_len=max_len, language=language)
+    raw_data = json.load(open(json_path))
+
+    inputs = []
+
+    # use numpy arrays
+    for dialogue in raw_data:
+        example = processor.process_dialogue(dialogue, mode="validate", task="nugget")
+        data = transfer_example_to_input(example, is_test=True)
+        dialogue_id = data[0]
+        input_ids = tf.expand_dims(tf.convert_to_tensor(data[1]), axis=0)
+        input_mask = tf.expand_dims(tf.convert_to_tensor(data[2]), axis=0)
+        input_type_ids = tf.expand_dims(tf.convert_to_tensor(data[3]), axis=0)
+        sentence_ids = tf.expand_dims(tf.convert_to_tensor(data[4]), axis=0)
+        sentence_mask = tf.expand_dims(tf.convert_to_tensor(data[5]), axis=0)
+        customer_labels = tf.expand_dims(tf.convert_to_tensor(data[6]), axis=0)
+        helpdesk_labels = tf.expand_dims(tf.convert_to_tensor(data[7]), axis=0)
+        quality_labels = tf.expand_dims(tf.convert_to_tensor(data[8]), axis=0)
+
+        if task == "nugget":
+            model_input = (dialogue_id, [input_ids, input_mask, input_type_ids, sentence_ids, sentence_mask,
+                                         customer_labels, helpdesk_labels])
+        elif task == "quality":
+            model_input = (dialogue_id, [input_ids, input_mask, input_type_ids, sentence_ids, sentence_mask,
+                                         quality_labels])
+        else:
+            model_input = None
+            raise ValueError
+
+        inputs.append(model_input)
+
+    return inputs
+
+
+
 def create_inputs(json_path, plm, max_len, is_train, language, task):
     if is_train:
         mode = "train"

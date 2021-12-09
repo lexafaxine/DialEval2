@@ -151,60 +151,23 @@ def pred_to_dict(turn_number, distribution):
     return result
 
 
-def pred_to_submission(inputs, cus_model, help_model, output_file, write_to_file=True):
-    # inputs = (dialogue_id, model_inputs)
-    prev_id = inputs[0][0]  # the first dialogue id
-    dialogue_length = inputs[0][1][3]
+def pred_to_submission(inputs, model, task, output_file, write_to_file=True):
+    # model_input = (dialogue_id, [input_ids, input_mask, input_type_ids, sentence_ids, sentence_mask,
+    # customer_labels, helpdesk_labels])
     nugget_list = []
     submission = []
     count = 0
-    for dialogue_turn in inputs:
-        dialogue_id = dialogue_turn[0]
+    for dialogue in inputs:
+        dialogue_id = dialogue[0]
+        if task == "nugget":
+            model_input = dialogue[1]
+            sentence_mask = dialogue[1][4]
+            dialogue_length = tf.math.count_nonzero(sentence_mask, axis=-1).numpy()
+            customer_length = (dialogue_length // 2) + 1 if dialogue_length % 2 == 1 else dialogue_length // 2
+            helpdesk_length = dialogue_length // 2
 
-        if dialogue_id != prev_id:
-            assert len(nugget_list) == dialogue_length
-            submission_format = {
-                "id": prev_id,
-                "nugget": nugget_list
-            }
-            submission.append(submission_format)
-            count += 1
-            print("Predicting ", count, " / 300 dialogues...")
-            # update
-            dialogue_length = dialogue_turn[1][3]
-            nugget_list = []
-            prev_id = dialogue_id
-
-        model_input = dialogue_turn[1]
-        turn_number = model_input[4]
-
-        if turn_number % 2 == 0:
-            model = cus_model
-        else:
-            model = help_model
-
-        # predict
-        logits = tf.squeeze(model.predict(x=model_input))
-        distribution = tf.nn.softmax(logits, axis=-1).numpy()
-        result = pred_to_dict(turn_number, distribution)
-
-        nugget_list.append(result)
-
-    # last dialogue
-    assert len(nugget_list) == dialogue_length
-    submission_format = {
-        "id": prev_id,
-        "nugget": nugget_list
-    }
-    submission.append(submission_format)
-    count += 1
-    print("Predicting ", count, " / 300 dialogues...")
-
-    if write_to_file:
-        with open(output_file, 'w') as f:
-            json.dump(submission, f)
-
-    return submission
+            # pred
+            customer_prob, helpdesk_prob = model.predict(x=model_input)
 
 
 def check_missing_prediction(id2pred, id2truth):

@@ -330,7 +330,7 @@ def create_dialogue_model(plm_name, language, max_turn_number, embedding_size=0,
 
     opt = tf.keras.optimizers.Adam(beta_1=0.9, beta_2=0.98, lr=1e-5)
 
-    model = tf.keras.Model(inputs=inputs, outputs=outputs, name="dialogue nugget")
+    model = tf.keras.Model(inputs=inputs, outputs=outputs, name="dialogue_nugget")
     model.compile(optimizer=opt, run_eagerly=True)
 
     return model
