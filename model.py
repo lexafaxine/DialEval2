@@ -159,8 +159,8 @@ class CustomSoftmax(layers.Layer):
         customer_prob = tf.nn.softmax(customer_logits, axis=-1) * customer_mask[:, :, None]
         helpdesk_prob = tf.nn.softmax(helpdesk_logits, axis=-1) * helpdesk_mask[:, :, None]
         # validate
-        cust_squared_error = tf.reduce_sum(tf.math.squared_difference(customer_prob, customer_labels), axis=-1) / 2
-        help_squared_error = tf.reduce_sum(tf.math.squared_difference(helpdesk_prob, helpdesk_labels), axis=-1) / 2
+        cust_squared_error = tf.reduce_sum(tf.math.squared_difference(customer_prob, customer_labels), axis=-1)
+        help_squared_error = tf.reduce_sum(tf.math.squared_difference(helpdesk_prob, helpdesk_labels), axis=-1)
 
         customer_rnss = -tf.experimental.numpy.log2(tf.math.sqrt(cust_squared_error / 2)) * customer_mask
         helpdesk_rnss = -tf.experimental.numpy.log2(tf.math.sqrt(help_squared_error / 2)) * helpdesk_mask

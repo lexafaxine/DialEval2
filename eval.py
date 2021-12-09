@@ -17,4 +17,4 @@ def eval(model_path, data_dir, plm, task, max_len, language, output_file):
     # customer_labels, helpdesk_labels])
 
     submission = pred_to_submission(inputs=dev_inputs, output_file=output_file, write_to_file=True,
-                                    model=dialogue_model)
+                                    model=dialogue_model, task="nugget")

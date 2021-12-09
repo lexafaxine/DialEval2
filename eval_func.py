@@ -137,24 +137,37 @@ def evaluate_nugget(id2pred, id2truth, alpha=.5, strict=True):
 
 # dev_inputs = (dialogue_id, [input_ids, input_mask, input_type_ids, dialogue_length, turn_number])
 
-def pred_to_dict(turn_number, distribution):
-    result = {}
-    if turn_number % 2 == 0:
-        # a customer turn
-        nugget_type = CUSTOMER_NUGGET_TYPES
-    else:
-        # a helpdesk turn
-        nugget_type = HELPDESK_NUGGET_TYPES
-    for nugget_type, prob in zip(nugget_type, distribution):
-        result[nugget_type] = float(prob)
+def pred_to_dict(customer_prob, helpdesk_prob, dialogue_length):
+    customer_length = (dialogue_length // 2) + 1 if dialogue_length % 2 == 1 else dialogue_length // 2
+    helpdesk_length = dialogue_length // 2
 
-    return result
+    customer_prob = customer_prob[:customer_length]
+    helpdesk_prob = helpdesk_prob[:helpdesk_length]
+
+    nugget_list = []
+
+    # 0 1 2 3 4 5
+    for i in range(dialogue_length):
+        result_dict = {}
+        if i % 2 == 0:
+            nugget_type = CUSTOMER_NUGGET_TYPES
+            distribution = customer_prob[i // 2]
+
+        else:
+            nugget_type = HELPDESK_NUGGET_TYPES
+            distribution = helpdesk_prob[i // 2]
+
+        for nugget_type, prob in zip(nugget_type, distribution):
+            result_dict[nugget_type] = float(prob)
+
+        nugget_list.append(result_dict)
+
+    return nugget_list
 
 
 def pred_to_submission(inputs, model, task, output_file, write_to_file=True):
     # model_input = (dialogue_id, [input_ids, input_mask, input_type_ids, sentence_ids, sentence_mask,
     # customer_labels, helpdesk_labels])
-    nugget_list = []
     submission = []
     count = 0
     for dialogue in inputs:
@@ -162,12 +175,26 @@ def pred_to_submission(inputs, model, task, output_file, write_to_file=True):
         if task == "nugget":
             model_input = dialogue[1]
             sentence_mask = dialogue[1][4]
-            dialogue_length = tf.math.count_nonzero(sentence_mask, axis=-1).numpy()
-            customer_length = (dialogue_length // 2) + 1 if dialogue_length % 2 == 1 else dialogue_length // 2
-            helpdesk_length = dialogue_length // 2
+            dialogue_length = np.squeeze(tf.math.count_nonzero(sentence_mask, axis=-1).numpy(), axis=-1)
 
             # pred
             customer_prob, helpdesk_prob = model.predict(x=model_input)
+            customer_prob = tf.squeeze(customer_prob, axis=0)
+            helpdesk_prob = tf.squeeze(helpdesk_prob, axis=0)
+            nugget_list = pred_to_dict(customer_prob, helpdesk_prob, dialogue_length)
+            submission_format = {
+                "id": dialogue_id,
+                "nugget": nugget_list  # a list of dict
+            }
+            submission.append(submission_format)
+            count += 1
+            print("Predicting ", count, " / 300 dialogues...")
+
+    if write_to_file:
+        with open(output_file, 'w') as f:
+            json.dump(submission, f)
+
+    return submission
 
 
 def check_missing_prediction(id2pred, id2truth):
