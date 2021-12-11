@@ -1,32 +1,23 @@
 import os
 import tensorflow as tf
 from pathlib2 import Path
-from model import create_sentence_model, create_dialogue_model
-from data_loader import create_dataset, create_inputs, create_predict_input
+from model import create_dialogue_model
+from data_loader import create_dataset, create_processor, create_predict_inputs
 from configure import FLAGS
 from datetime import datetime
 from eval_func import pred_to_submission, evaluate
 import pandas as pd
 
-PROJECT_DIR = Path("/content/drive/MyDrive/nugget")
+PROJECT_DIR = Path("/content/drive/MyDrive/Dialogue")
 NUGGET_RESULT = PROJECT_DIR / "nugget_result.csv"
 
 flags = tf.compat.v1.flags
 
 
-def get_model_name(plm, sender, language):
+def get_model_name(plm, language, task):
     now = datetime.now()
-    # BERT_cust_zh_2111161910
-    if language == "Chinese":
-        lang = "zh"
-    else:
-        lang = "en"
-
     date_time = now.strftime("%y%m%d%H%M")
-    if sender == "customer" or "helpdesk":
-        return plm + "_" + sender[:4] + "_" + lang + date_time
-    elif sender == "both":
-        return "outputs" + plm + "_" + lang + date_time
+    return plm + "_" + language + "_" + task + "_" + date_time
 
 
 class Trainer(object):
@@ -37,153 +28,82 @@ class Trainer(object):
         if FLAGS.language not in ["Chinese", "English"]:
             raise ValueError("Language must be Chinese or English!")
 
-        lang = "zh" if FLAGS.language == "Chinese" else "en"
+        self.lang = "zh" if FLAGS.language == "Chinese" else "en"
         self.logger.info("Task: " + str(FLAGS.task))
         self.logger.info("Language: " + str(FLAGS.language))
 
         # Load Data
-        self.logger.info("Loading Dataset...")
         self.train_path, self.dev_path, self.test_path = prepare_data(data_dir=FLAGS.data_dir,
                                                                       language=FLAGS.language)
+        processor, embedding_size = create_processor(plm=FLAGS.plm, max_len=FLAGS.max_len, language=FLAGS.language)
 
-        if FLAGS.embedding == "sentence":
-            self.train_cust, self.train_help = get_dataset(mode="train", embedding="sentence", plm=FLAGS.plm,
-                                                           language=lang)
+        self.train_dataset = create_dataset(processor=processor, json_path=str(self.train_path),
+                                            mode="train", task=FLAGS.task,
+                                            shuffle_buffer_size=FLAGS.shuffle_buffer_size,
+                                            batch_size=FLAGS.batch_size)
+        self.val_dataset = create_dataset(processor=processor, json_path=str(self.dev_path),
+                                          mode="validate", task=FLAGS.task,
+                                          shuffle_buffer_size=FLAGS.shuffle_buffer_size,
+                                          batch_size=FLAGS.batch_size)
 
-            if self.train_cust is None:
-                train_data_cust = create_inputs(json_path=self.train_path, plm=FLAGS.plm,
-                                                max_len=FLAGS.max_sentence_len,
-                                                is_train=True, sender="customer", language=FLAGS.language)
-                self.train_cust = create_dataset(inputs=train_data_cust, shuffle_buffer_size=100,
-                                                 batch_size=FLAGS.batch_size)
-                # BERT_cust_train_zn
-                dataset_path = FLAGS.data_dir + "/" + FLAGS.plm + "_" + "cust" + "_train_" + lang
-                tf.data.experimental.save(self.train_cust, dataset_path)
-
-            if self.train_help is None:
-                train_data_help = create_inputs(json_path=self.train_path, plm=FLAGS.plm,
-                                                max_len=FLAGS.max_sentence_len,
-                                                is_train=True, sender="helpdesk", language=FLAGS.language)
-                self.train_help = create_dataset(inputs=train_data_help, shuffle_buffer_size=100,
-                                                 batch_size=FLAGS.batch_size)
-                dataset_path = FLAGS.data_dir + "/" + FLAGS.plm + "_" + "help" + "_train_" + lang
-                tf.data.experimental.save(self.train_help, dataset_path)
-
-            self.val_cust, self.val_help = get_dataset(mode="val", embedding="sentence", plm=FLAGS.plm,
-                                                       language=lang)
-
-            if self.val_cust is None:
-                dev_data_c = create_predict_input(json_path=self.dev_path, plm=FLAGS.plm,
-                                                  max_len=FLAGS.max_sentence_len,
-                                                  sender="customer", language=FLAGS.language)
-
-                self.val_cust = create_dataset(dev_data_c, shuffle_buffer_size=100, batch_size=32)
-                dataset_path = FLAGS.data_dir + "/" + FLAGS.plm + "_" + "cust" + "_val_" + lang
-                tf.data.experimental.save(self.val_cust, dataset_path)
-
-            if self.val_help is None:
-                dev_data_h = create_predict_input(json_path=self.dev_path, plm=FLAGS.plm,
-                                                  max_len=FLAGS.max_sentence_len,
-                                                  sender="helpdesk", language=FLAGS.language)
-                dataset_path = FLAGS.data_dir + "/" + FLAGS.plm + "_" + "help" + "_val_" + lang
-                self.val_help = create_dataset(dev_data_h, shuffle_buffer_size=100, batch_size=32)
-                tf.data.experimental.save(self.val_help, dataset_path)
-
-            # Cretae model
-            self.cust_model = create_sentence_model(plm_name=FLAGS.plm, language=FLAGS.language,
-                                                    sender="customer", max_len=FLAGS.max_sentence_len,
-                                                    hidden_size=FLAGS.lstm_hidden_size, rnn_dropout=FLAGS.rnn_dropout,
-                                                    warmup=FLAGS.warmup)
-            self.cust_name = get_model_name(FLAGS.plm, sender="customer", language=FLAGS.language)
-
-            self.help_model = create_sentence_model(plm_name=FLAGS.plm, language=FLAGS.language,
-                                                    sender="helpdesk", max_len=FLAGS.max_sentence_len,
-                                                    hidden_size=FLAGS.lstm_hidden_size, rnn_dropout=FLAGS.rnn_dropout,
-                                                    warmup=FLAGS.warmup)
-            self.help_name = get_model_name(FLAGS.plm, sender="helpdesk", language=FLAGS.language)
+        # Create model
+        self.model = create_dialogue_model(plm_name=FLAGS.plm, language=FLAGS.language,
+                                           max_turn_number=FLAGS.max_turn_number,
+                                           embedding_size=embedding_size, max_len=FLAGS.max_len, ff_size=FLAGS.ff_size,
+                                           layer_num=FLAGS.layer_num,
+                                           dropout=FLAGS.dropout, task=FLAGS.task)
 
         if log_to_tensorboard:
             pass
 
-    def train(self, sender):
+    def train(self):
+        self.logger.info("Start Training Model...")
+        model_path = FLAGS.checkpoint_dir + "/" + get_model_name(FLAGS.plm, language=self.lang,
+                                                                 task=FLAGS.task)
+        os.mkdir(model_path)
+        callback = tf.keras.callbacks.ModelCheckpoint(filepath=model_path, save_weights_only=False,
+                                                      verbose=1, monitor="val_rnss",
+                                                      save_best_only=True, mode="max")
+        tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+        train_steps = (4090 // FLAGS.batch_size) + 1
+        val_steps = (300 // FLAGS.batch_size) + 1
+        history = self.model.fit(x=self.train_dataset, epochs=FLAGS.epoch, verbose="auto", callbacks=callback,
+                                 validation_data=self.val_dataset, steps_per_epochs=train_steps,
+                                 validation_steps=val_steps)
 
-        if FLAGS.embedding == "sentence":
+        return history, model_path
 
-            if sender == "customer":
-                self.logger.info("Start Training Customer Model...")
+    def validate(self, model_path):
+        self.logger.info("Start Validating...")
+        dialogue_model = tf.keras.models.load_model(model_path)
+        dev_inputs = create_predict_inputs(self.dev_path,
+                                           plm=FLAGS.plm, max_len=FLAGS.max_len,
+                                           language=FLAGS.language, task=FLAGS.task)
 
-                ckpt_path = FLAGS.checkpoint_dir + "/" + self.cust_name + "/"
+        output_file = Path(model_path) / "submission.json"
 
-                callback_cust = tf.keras.callbacks.ModelCheckpoint(filepath=ckpt_path,
-                                                                   save_weights_only=True, verbose=1,
-                                                                   monitor="val_rnss", save_best_only=True, mode="max")
+        submission = pred_to_submission(inputs=dev_inputs, output_file=output_file, write_to_file=True,
+                                        model=dialogue_model, task=FLAGS.task)
 
-                tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
-                history_cust = self.cust_model.fit(x=self.train_cust, epochs=FLAGS.epoch, verbose="auto",
-                                                   callbacks=callback_cust, validation_data=self.val_cust)
-                tf.keras.utils.plot_model(self.cust_model, ckpt_path + "model.png", show_shapes=True)
+        results = evaluate(output_file, self.dev_path, strict=True)
 
-                return history_cust, ckpt_path
+        self.logger.info("Evaluate Result: {jsd:" + str(results["jsd"]) + ", rnss:" + str(results["rnss"]) + "}")
 
-            elif sender == "helpdesk":
+        if FLAGS.task == "nugget":
+            result_dict = {
+                'ckpt': [model_path],
+                'jsd': [results["jsd"]],
+                'rnss': [results["rnss"]]
+            }
+            df = pd.DataFrame(result_dict)
 
-                tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.INFO)
-                self.logger.info("Start Training Helpdesk Model...")
+            if not os.path.isfile(NUGGET_RESULT):
+                df.to_csv(NUGGET_RESULT, index=False)
 
-                ckpt_path = FLAGS.checkpoint_dir + "/" + self.help_name + "/"
-                callback_help = tf.keras.callbacks.ModelCheckpoint(filepath=ckpt_path,
-                                                                   save_weights_only=True, verbose=1,
-                                                                   monitor="val_rnss", save_best_only=True, mode="max")
+            else:
+                df.to_csv(NUGGET_RESULT, mode='a', header=False, index=False)
 
-                tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
-                history_help = self.help_model.fit(x=self.train_help, epochs=FLAGS.epoch, verbose="auto",
-                                                   callbacks=callback_help, validation_data=self.val_help)
-                tf.keras.utils.plot_model(self.help_model, ckpt_path + "model.png", show_shapes=True)
-
-                return history_help, ckpt_path
-
-        elif FLAGS.embedding == "dialogue":
-            pass
-
-    def validate(self, ckpt_cus, ckpt_help):
-        if FLAGS.embedding == "sentence":
-            tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.INFO)
-            self.logger.info("Start Evaluating the model...")
-            cus_model = create_sentence_model(plm_name=FLAGS.plm, language=FLAGS.language, sender="customer",
-                                              max_len=FLAGS.max_sentence_len, hidden_size=FLAGS.lstm_hidden_size,
-                                              rnn_dropout=FLAGS.rnn_dropout)
-            help_model = create_sentence_model(plm_name=FLAGS.plm, language=FLAGS.language, sender="helpdesk",
-                                               max_len=FLAGS.max_sentence_len, hidden_size=FLAGS.lstm_hidden_size,
-                                               rnn_dropout=FLAGS.rnn_dropout)
-
-            cus_model.load_weights(ckpt_cus)
-            help_model.load_weights(ckpt_help)
-            dev_inputs = create_predict_input(json_path=self.dev_path, plm=FLAGS.plm, max_len=FLAGS.max_sentence_len,
-                                              sender="both", language=FLAGS.language)
-
-            output_file = Path(ckpt_cus) / "submission.json"
-
-            submission = pred_to_submission(inputs=dev_inputs, cus_model=cus_model, help_model=help_model,
-                                            output_file=output_file, write_to_file=True)
-            results = evaluate(output_file, self.dev_path, strict=True)
-
-            self.logger.info("Evaluate Result: {jsd:" + str(results["jsd"]) + ", rnss:" + str(results["rnss"]) + "}")
-
-            if FLAGS.task == "nugget":
-                result_dict = {
-                    'ckpt': [ckpt_cus],
-                    'jsd': [results["jsd"]],
-                    'rnss': [results["rnss"]]
-                }
-                df = pd.DataFrame(result_dict)
-
-                if not os.path.isfile(NUGGET_RESULT):
-                    df.to_csv(NUGGET_RESULT, index=False)
-
-                else:
-                    df.to_csv(NUGGET_RESULT, mode='a', header=False, index=False)
-
-            return results
+        return results
 
 
 def prepare_data(data_dir, language):
@@ -205,32 +125,11 @@ def prepare_data(data_dir, language):
     return train_path, dev_path, test_path
 
 
-def get_dataset(mode, embedding, plm, language):
-    if embedding == "sentence":
-        cus_dataset_path = FLAGS.data_dir + plm + "_" + "cust_" + mode + "_" + language
-        help_dataset_path = FLAGS.data_dir + plm + "_" + "help_" + mode + "_" + language
-        if not os.path.isdir(cus_dataset_path):
-            cus_dataset = None
-        else:
-            print("Get dataset from:", cus_dataset_path)
-            cus_dataset = tf.data.experimental.load(cus_dataset_path)
-
-        if not os.path.isdir(help_dataset_path):
-            help_dataset = None
-        else:
-            print("Get dataset from:", cus_dataset_path)
-            help_dataset = tf.data.experimental.load(help_dataset_path)
-
-        return cus_dataset, help_dataset
-
-
 def main(_):
     trainer = Trainer()
-    if FLAGS.embedding == "sentence":
-        _, ckpt_cus = trainer.train(sender="customer")
-        _, ckpt_help = trainer.train(sender="helpdesk")
-        trainer.validate(ckpt_cus, ckpt_help)
+    _, model_path = trainer.train()
+    trainer.validate(model_path)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     tf.compat.v1.app.run()

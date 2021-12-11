@@ -69,11 +69,15 @@ def create_predict_inputs(json_path, plm, max_len, language, task):
     return inputs
 
 
+def create_processor(plm, max_len, language):
+    processor = Processor(plm=plm, max_len=max_len, language=language)
 
-def create_inputs(json_path, plm, max_len, is_train, language, task):
+    return processor, len(processor.tokenizer)
+
+
+def create_inputs(processor, json_path, is_train, task):
     if is_train:
         mode = "train"
-        processor = Processor(plm=plm, max_len=max_len, language=language)
         raw_data = json.load(open(json_path))
 
         for dialogue in raw_data:
@@ -100,12 +104,12 @@ def create_inputs(json_path, plm, max_len, is_train, language, task):
                 }
 
 
-def create_dataset(json_path, plm, max_len, mode, language, task, shuffle_buffer_size=200, batch_size=16):
+def create_dataset(processor, json_path, mode, task, shuffle_buffer_size=200, batch_size=4):
     from functools import partial
     if task == "nugget":
         if mode == "train" or "validate":
             dataset = tf.data.Dataset.from_generator(
-                partial(create_inputs, json_path, plm, max_len, True, language, task),
+                partial(create_inputs, processor, json_path, True, task),
                 output_types=({"input_ids": tf.int32,
                                "input_mask": tf.int32,
                                "input_type_ids": tf.int32,

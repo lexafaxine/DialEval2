@@ -3,7 +3,8 @@ import sys
 from pathlib2 import Path
 import tensorflow as tf
 
-PROJECT_DIR = Path("/content/drive/MyDrive/nugget")
+PROJECT_DIR = Path("/content/drive/MyDrive/dialogue")
+
 
 def parse_args():
     """

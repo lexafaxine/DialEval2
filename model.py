@@ -198,7 +198,7 @@ class Bert(layers.Layer):
 
         # Load the Transformes BERT model
         self.model = TFBertModel.from_pretrained(bert_name, config=self.config)
-        # self.model.resize_token_embeddings(embedding_size)
+        self.model.resize_token_embeddings(embedding_size)
 
     def call(self, inputs):
         # inputs = [input_ids, input_mask, input_type_ids, sentence_ids, sentence_mask]
@@ -276,8 +276,8 @@ class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
         return tf.math.rsqrt(self.d_model) * tf.math.minimum(arg1, arg2)
 
 
-def create_dialogue_model(plm_name, language, max_turn_number, embedding_size=0,
-                          max_len=256, hidden_size=768, ff_size=200, heads=8, layer_num=1, dropout=0.1):
+def create_dialogue_model(plm_name, language, max_turn_number, task, embedding_size,
+                          max_len=512, hidden_size=768, ff_size=200, heads=8, layer_num=1, dropout=0.1):
     # tf.keras.backend.set_floatx('float16')
     if plm_name == "BERT":
         plm = Bert(language=language, embedding_size=embedding_size)
@@ -310,27 +310,30 @@ def create_dialogue_model(plm_name, language, max_turn_number, embedding_size=0,
     inputs = [input_ids, input_mask, input_type_ids, sentence_ids, sentence_masks, customer_labels, helpdesk_labels]
 
     # define graph
+    if task == "nugget":
+        plm_inputs = {
+            "input_ids": input_ids, "input_mask": input_mask, "input_type_ids": input_type_ids,
+            "sentence_ids": sentence_ids, "sentence_masks": sentence_masks
+        }
+        sents_vec = plm(inputs=plm_inputs)  # [Batch, max_turn_number, hidden_size]
+        sents_vec = encoder(x=sents_vec, training=True, mask=sentence_masks)
 
-    plm_inputs = {
-        "input_ids": input_ids, "input_mask": input_mask, "input_type_ids": input_type_ids,
-        "sentence_ids": sentence_ids, "sentence_masks": sentence_masks
-    }
-    sents_vec = plm(inputs=plm_inputs)  # [Batch, max_turn_number, hidden_size]
-    sents_vec = encoder(x=sents_vec, training=True, mask=sentence_masks)
+        customer_logits, helpdesk_logits = custom_dense(sents_vec, mask=sentence_masks)
 
-    customer_logits, helpdesk_logits = custom_dense(sents_vec, mask=sentence_masks)
+        softmax_inputs = {
+            "customer_logits": customer_logits, "helpdesk_logits": helpdesk_logits,
+            "customer_labels": customer_labels, "helpdesk_labels": helpdesk_labels
+        }
+        customer_prob, helpdesk_prob = custom_softmax(softmax_inputs, mask=sentence_masks)
 
-    softmax_inputs = {
-        "customer_logits": customer_logits, "helpdesk_logits": helpdesk_logits,
-        "customer_labels": customer_labels, "helpdesk_labels": helpdesk_labels
-    }
-    customer_prob, helpdesk_prob = custom_softmax(softmax_inputs, mask=sentence_masks)
+        outputs = [customer_prob, helpdesk_prob]
 
-    outputs = [customer_prob, helpdesk_prob]
+        opt = tf.keras.optimizers.Adam(beta_1=0.9, beta_2=0.98, lr=1e-5)
 
-    opt = tf.keras.optimizers.Adam(beta_1=0.9, beta_2=0.98, lr=1e-5)
+        model = tf.keras.Model(inputs=inputs, outputs=outputs, name="dialogue_nugget")
+        model.compile(optimizer=opt, run_eagerly=True)
 
-    model = tf.keras.Model(inputs=inputs, outputs=outputs, name="dialogue_nugget")
-    model.compile(optimizer=opt, run_eagerly=True)
+    else:
+        model = None
 
     return model

@@ -88,9 +88,9 @@ def parse_quality(annotations):
     return []
 
 
-def truncator(tokenized_dialogue, sep_token):
+def truncator(tokenized_dialogue, sep_token, max_len):
     turn_number = len(tokenized_dialogue)
-    max_utterance_len = 512 // turn_number
+    max_utterance_len = max_len // turn_number
 
     length_now = 0
 
@@ -140,9 +140,11 @@ class Processor(object):
         self.trn_tokens = ["[trn1]", "[trn2]", "[trn3]", "[trn4]", "[trn5]", "[trn6]"]
         self.sdr_tokens = ["[customer]", "[helpdesk]"]
 
-        # self.tokenizer.add_tokens(self.len_tokens, special_tokens=True)
-        # self.tokenizer.add_tokens(self.trn_tokens, special_tokens=True)
-        # self.tokenizer.add_tokens(self.sdr_tokens, special_tokens=True)
+        self.tokenizer.add_tokens(self.len_tokens, special_tokens=True)
+        self.tokenizer.add_tokens(self.trn_tokens, special_tokens=True)
+        self.tokenizer.add_tokens(self.sdr_tokens, special_tokens=True)
+
+        self.tokenizer_length = len(self.tokenizer)
 
     def process_dialogue(self, dialogue, mode, task):
 
@@ -171,12 +173,12 @@ class Processor(object):
         for i in range(turn_number):
             utterance = " ".join(turns[i]["utterances"])
             utterance_token = self.tokenizer.tokenize(utterance)
-            # cls, sep, len, trn
-            # len_token = self.len_tokens[turn_number - 1]
-            # trn_token = self.trn_tokens[i // 2]
-            # sdr_token = self.sdr_tokens[0] if i % 2 == 0 else self.sdr_tokens[1]
-            #
-            # utterance_token = [len_token] + [trn_token] + [sdr_token] + utterance_token
+            # cls,  sep,  len,  trn
+            len_token = self.len_tokens[turn_number - 1]
+            trn_token = self.trn_tokens[i // 2]
+            sdr_token = self.sdr_tokens[0] if i % 2 == 0 else self.sdr_tokens[1]
+
+            utterance_token = [len_token] + [trn_token] + [sdr_token] + utterance_token
 
             if self.plm == "BERT":
                 utterance_token = ['[CLS]'] + utterance_token + ['[SEP]']
@@ -186,10 +188,10 @@ class Processor(object):
             dialogue_length += len(utterance_token)
             tokenized_dialogue.append(utterance_token)
 
-        if dialogue_length > 512:
+        if dialogue_length > self.max_len:
             # max length of bert and xlnet
             sep_token = "[SEP]" if self.plm == "BERT" else "<sep>"
-            tokenized_dialogue = truncator(tokenized_dialogue, sep_token)
+            tokenized_dialogue = truncator(tokenized_dialogue, sep_token, self.max_len)
 
         tokenized_dialogue = list(chain.from_iterable(tokenized_dialogue))
 
@@ -216,8 +218,8 @@ class Processor(object):
 
         # pad input
 
-        padding_length = 512 - len(dialogue_idxs)
-        input_mask = [0] * 512
+        padding_length = self.max_len - len(dialogue_idxs)
+        input_mask = [0] * self.max_len
 
         if segments_ids == []:
             print(dialogue_id, tokenized_dialogue)
@@ -228,7 +230,7 @@ class Processor(object):
                 segments_ids = segments_ids + ([0] * padding_length)
             else:
                 segments_ids = segments_ids + ([1] * padding_length)
-        for j in range(512):
+        for j in range(self.max_len):
             if dialogue_idxs[j] != self.pad_vid:
                 input_mask[j] = 1
 
@@ -245,7 +247,7 @@ class Processor(object):
             if sentence_mask[j] == 0:
                 sentence_ids[j] = 0
 
-        # pad customer label
+        # pad label
         customer_max_turn = (MAX_TURN_NUMBER // 2) + 1 if MAX_TURN_NUMBER % 2 == 1 else MAX_TURN_NUMBER // 2
         customer_padding_length = customer_max_turn - len(customer_labels)
 
