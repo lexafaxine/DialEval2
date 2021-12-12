@@ -7,6 +7,8 @@ from itertools import chain
 
 # split custom labels and helpdesk labels to train separately in sentence level
 
+QUALITY_MEASURES = ("A", "E", "S")
+QUALITY_SCALES = ('2', '1', '0', '-1', '-2')
 CUSTOMER_NUGGET_TYPES = ('CNUG0', 'CNUG', 'CNUG*', 'CNaN')
 HELPDESK_NUGGET_TYPES = ('HNUG', 'HNUG*', 'HNaN')
 MAX_TURN_NUMBER = 7
@@ -85,7 +87,28 @@ def parse_nugget(annotations, dialogue_length):
 
 
 def parse_quality(annotations):
-    return []
+    label = {}
+
+    for anno in annotations:
+        for measure in QUALITY_MEASURES:
+            label.setdefault(measure, [])
+            label[measure].append(anno["quality"][measure])
+
+    for measure, values in label.items():
+        distribution = []
+        count = Counter(values)
+        for scale in QUALITY_SCALES:
+            distribution.append(count.get(int(scale), 0))
+
+        distribution = np.array(distribution, dtype=np.float32)
+        assert distribution.sum() == sum(count.values())
+        distribution /= distribution.sum()
+
+        label[measure] = distribution
+
+    label = [label[measure] for measure in QUALITY_MEASURES]
+
+    return np.stack(label)
 
 
 def truncator(tokenized_dialogue, sep_token, max_len):
@@ -146,7 +169,7 @@ class Processor(object):
 
         self.tokenizer_length = len(self.tokenizer)
 
-    def process_dialogue(self, dialogue, mode, task):
+    def process_dialogue(self, dialogue, mode):
 
         turn_number = len(dialogue["turns"])
         if mode == "train" or "validate":
@@ -154,9 +177,9 @@ class Processor(object):
             customer_labels, helpdesk_labels = parse_nugget(annotations=annotations, dialogue_length=turn_number)
             quality_labels = parse_quality(annotations)
         elif mode == "test":
-            quality_labels = ["[PAD]"] * turn_number
-            customer_labels = ["[PAD]"] * turn_number
-            helpdesk_labels = ["[PAD"] * turn_number
+            quality_labels = [[1/len(QUALITY_SCALES)] * len(QUALITY_SCALES)] * len(QUALITY_MEASURES)
+            customer_labels = ["CNaN"] * turn_number
+            helpdesk_labels = ["HNaN"] * turn_number
 
         else:
             raise ValueError("mode must be train, dev or test")

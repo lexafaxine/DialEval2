@@ -8,7 +8,7 @@ from datetime import datetime
 from eval_func import pred_to_submission, evaluate
 import pandas as pd
 
-PROJECT_DIR = Path("/content/drive/MyDrive/Dialogue")
+PROJECT_DIR = Path("/content/drive/MyDrive/dialogue")
 NUGGET_RESULT = PROJECT_DIR / "nugget_result.csv"
 
 flags = tf.compat.v1.flags
@@ -68,12 +68,13 @@ class Trainer(object):
         train_steps = (4090 // FLAGS.batch_size) + 1
         val_steps = (300 // FLAGS.batch_size) + 1
         history = self.model.fit(x=self.train_dataset, epochs=FLAGS.epoch, verbose="auto", callbacks=callback,
-                                 validation_data=self.val_dataset, steps_per_epochs=train_steps,
+                                 validation_data=self.val_dataset, steps_per_epoch=train_steps,
                                  validation_steps=val_steps)
 
         return history, model_path
 
     def validate(self, model_path):
+        tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.INFO)
         self.logger.info("Start Validating...")
         dialogue_model = tf.keras.models.load_model(model_path)
         dev_inputs = create_predict_inputs(self.dev_path,

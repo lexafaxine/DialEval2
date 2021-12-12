@@ -200,7 +200,7 @@ class Bert(layers.Layer):
         self.model = TFBertModel.from_pretrained(bert_name, config=self.config)
         self.model.resize_token_embeddings(embedding_size)
 
-    def call(self, inputs):
+    def call(self, inputs, task):
         # inputs = [input_ids, input_mask, input_type_ids, sentence_ids, sentence_mask]
 
         input_ids = inputs["input_ids"]
@@ -208,19 +208,22 @@ class Bert(layers.Layer):
         input_type_ids = inputs["input_type_ids"]
         outputs = self.model(input_ids=input_ids, attention_mask=input_mask, token_type_ids=input_type_ids,
                              training=True)
-        x = outputs["last_hidden_state"]
-        x *= tf.math.sqrt(tf.cast(768, tf.float32))
-        # check_nan(x, name="bert_output")
+        if task == "nugget":
+            x = outputs["last_hidden_state"]
+            x *= tf.math.sqrt(tf.cast(768, tf.float32))
+            # check_nan(x, name="bert_output")
 
-        sentence_ids = inputs["sentence_ids"]
-        sentence_masks = inputs["sentence_masks"]
+            sentence_ids = inputs["sentence_ids"]
+            sentence_masks = inputs["sentence_masks"]
 
-        sents_vec = tf.gather(x, indices=sentence_ids, batch_dims=1)
-        sents_vec = sents_vec * tf.cast(sentence_masks[:, :, None], dtype=tf.float32)
+            sents_vec = tf.gather(x, indices=sentence_ids, batch_dims=1)
+            sents_vec = sents_vec * tf.cast(sentence_masks[:, :, None], dtype=tf.float32)
 
-        # check_nan(sents_vec, name="sentence vec")
+            # check_nan(sents_vec, name="sentence vec")
 
-        return sents_vec
+            return sents_vec
+        else:
+            return None
 
 
 class XLNet(layers.Layer):
@@ -239,25 +242,29 @@ class XLNet(layers.Layer):
 
         self.model.resize_token_embeddings(embedding_size)
 
-    def call(self, inputs):
+    def call(self, inputs, task):
         # inputs = [input_ids, input_mask, input_type_ids, sentence_ids, sentence_mask]
         input_ids = inputs["input_ids"]
         input_mask = inputs["input_mask"]
         input_type_ids = inputs["input_type_ids"]
         outputs = self.model(input_ids=input_ids, attention_mask=input_mask, token_type_ids=input_type_ids)
-        x = outputs.last_hidden_state
-        x *= tf.math.sqrt(tf.cast(768, tf.float32))
 
-        check_nan(x, name="xlnet_output")
-        sentence_ids = inputs["sentence_ids"]
-        sentence_masks = inputs["sentence_masks"]
+        if task == "nugget":
+            x = outputs.last_hidden_state
+            x *= tf.math.sqrt(tf.cast(768, tf.float32))
 
-        sents_vec = tf.gather(x, indices=sentence_ids, batch_dims=1)
-        sents_vec = sents_vec * tf.cast(sentence_masks, dtype=tf.float32)
+            check_nan(x, name="xlnet_output")
+            sentence_ids = inputs["sentence_ids"]
+            sentence_masks = inputs["sentence_masks"]
 
-        check_nan(sents_vec, name="sentence vec")
+            sents_vec = tf.gather(x, indices=sentence_ids, batch_dims=1)
+            sents_vec = sents_vec * tf.cast(sentence_masks, dtype=tf.float32)
 
-        return sents_vec
+            check_nan(sents_vec, name="sentence vec")
+
+            return sents_vec
+        else:
+            return None
 
 
 class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
@@ -277,7 +284,7 @@ class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
 
 
 def create_dialogue_model(plm_name, language, max_turn_number, task, embedding_size,
-                          max_len=512, hidden_size=768, ff_size=200, heads=8, layer_num=1, dropout=0.1):
+                          encoder="transformer", max_len=512, hidden_size=768, ff_size=200, heads=8, layer_num=1, dropout=0.1):
     # tf.keras.backend.set_floatx('float16')
     if plm_name == "BERT":
         plm = Bert(language=language, embedding_size=embedding_size)
@@ -287,7 +294,7 @@ def create_dialogue_model(plm_name, language, max_turn_number, task, embedding_s
 
     else:
         raise ValueError("plm not in (BERT, XLNet)")
-    encoder = TransformerEncoder(d_model=hidden_size, num_heads=heads, d_ff=ff_size, rate=dropout, num_layers=layer_num)
+
     custom_dense = CustomDense(customer_dim=4, helpdesk_dim=3, max_turn_number=max_turn_number, name="customer dense")
     custom_softmax = CustomSoftmax(max_turn_number=max_turn_number, name="custom Softmax")
 
@@ -311,11 +318,13 @@ def create_dialogue_model(plm_name, language, max_turn_number, task, embedding_s
 
     # define graph
     if task == "nugget":
+        encoder = TransformerEncoder(d_model=hidden_size, num_heads=heads, d_ff=ff_size, rate=dropout,
+                                     num_layers=layer_num)
         plm_inputs = {
             "input_ids": input_ids, "input_mask": input_mask, "input_type_ids": input_type_ids,
             "sentence_ids": sentence_ids, "sentence_masks": sentence_masks
         }
-        sents_vec = plm(inputs=plm_inputs)  # [Batch, max_turn_number, hidden_size]
+        sents_vec = plm(inputs=plm_inputs, task=task)  # [Batch, max_turn_number, hidden_size]
         sents_vec = encoder(x=sents_vec, training=True, mask=sentence_masks)
 
         customer_logits, helpdesk_logits = custom_dense(sents_vec, mask=sentence_masks)
@@ -333,7 +342,14 @@ def create_dialogue_model(plm_name, language, max_turn_number, task, embedding_s
         model = tf.keras.Model(inputs=inputs, outputs=outputs, name="dialogue_nugget")
         model.compile(optimizer=opt, run_eagerly=True)
 
+    elif task == "quality":
+        if encoder == "transformer":
+            encoder = TransformerEncoder(d_model=hidden_size, num_heads=heads, d_ff=ff_size, rate=dropout,
+                                         num_layers=layer_num)
+        return None
+
+
     else:
         model = None
-
+        raise ValueError("task must be nugget or quality!")
     return model

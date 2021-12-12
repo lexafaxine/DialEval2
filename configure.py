@@ -19,7 +19,7 @@ def parse_args():
                         help="Path of train, dev and test")
     parser.add_argument("--checkpoint_dir", default=project_dir, type=str,
                         help="Directory where the checkpoints are saved")
-    parser.add_argument("--shuffle_buffer_size", default=100, type=int,
+    parser.add_argument("--shuffle_buffer_size", default=5000, type=int,
                         help="Dataset shuffle buffer size")
 
     # Task detail

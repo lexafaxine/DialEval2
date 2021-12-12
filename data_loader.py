@@ -42,7 +42,7 @@ def create_predict_inputs(json_path, plm, max_len, language, task):
 
     # use numpy arrays
     for dialogue in raw_data:
-        example = processor.process_dialogue(dialogue, mode="validate", task="nugget")
+        example = processor.process_dialogue(dialogue, mode="validate")
         data = transfer_example_to_input(example, is_test=True)
         dialogue_id = data[0]
         input_ids = tf.expand_dims(tf.convert_to_tensor(data[1]), axis=0)
@@ -81,7 +81,7 @@ def create_inputs(processor, json_path, is_train, task):
         raw_data = json.load(open(json_path))
 
         for dialogue in raw_data:
-            example = processor.process_dialogue(dialogue, mode="train", task="nugget")
+            example = processor.process_dialogue(dialogue, mode="train")
             data = transfer_example_to_input(example, is_test=False)
             input_ids = data[0]
             input_mask = data[1]
@@ -102,6 +102,18 @@ def create_inputs(processor, json_path, is_train, task):
                     "customer_labels": customer_labels,
                     "helpdesk_labels": helpdesk_labels
                 }
+
+            elif task == "quality":
+                yield {
+                    "input_ids": input_ids,
+                    "input_mask": input_mask,
+                    "input_type_ids": input_type_ids,
+                    "sentence_ids": sentence_ids,
+                    "sentence_masks": sentence_masks,
+                    "quality_labels": quality_labels
+                }
+            else:
+                raise ValueError
 
 
 def create_dataset(processor, json_path, mode, task, shuffle_buffer_size=200, batch_size=4):
@@ -124,7 +136,21 @@ def create_dataset(processor, json_path, mode, task, shuffle_buffer_size=200, ba
             return dataset
 
     elif task == "quality":
-        return []
+        if mode == "train" or "validate":
+            dataset = tf.data.Dataset.from_generator(
+                partial(create_inputs, processor, json_path, True, task),
+                output_types=({"input_ids": tf.int32,
+                               "input_mask": tf.int32,
+                               "input_type_ids": tf.int32,
+                               "sentence_ids": tf.int32,
+                               "sentence_masks": tf.int32,
+                               "customer_labels": tf.float32,
+                               "quality_labels": tf.float32})
+            )
+
+            dataset = dataset.shuffle(shuffle_buffer_size).batch(batch_size=batch_size).repeat()
+
+            return dataset
 
     else:
         raise ValueError("Task not in (nugget, quality)")
