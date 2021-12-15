@@ -45,6 +45,21 @@ def point_wise_feed_forward_network(d_model, dff):
     ])
 
 
+# baseline quality model: just bert
+class Baseline(layers.Layer):
+    def __init__(self):
+        super(Baseline, self).__init__()
+        self.dense_layers = [layers.Dense(5, activation='relu') for _ in range(3)]
+
+    def call(self, x):
+        quality_labels = []
+        for i in range(3):
+            quality_label = self.dense_layers[i](x)
+            quality_labels.append(quality_label)
+
+        return tf.stack(quality_labels)
+
+
 # encoder transformer layer
 class TransformerEncoderLayer(layers.Layer):
     def __init__(self, d_model, num_heads, d_ff, rate=0.1):
@@ -105,12 +120,12 @@ class TransformerEncoder(layers.Layer):
         return x
 
 
-class CustomDense(layers.Layer):
+class NuggetDense(layers.Layer):
     """Get custom and helpdesk label's indices
        A multi output model"""
 
     def __init__(self, customer_dim, helpdesk_dim, max_turn_number, name=None):
-        super(CustomDense, self).__init__()
+        super(NuggetDense, self).__init__()
         self.customer_dense = layers.Dense(customer_dim, activation='relu')
         self.helpdesk_dense = layers.Dense(helpdesk_dim, activation='relu')
         # assume order is [customer, helpdesk, customer, ...]
@@ -133,10 +148,10 @@ class CustomDense(layers.Layer):
         return customer_logits, helpdesk_logits
 
 
-class CustomSoftmax(layers.Layer):
+class NuggetSoftmax(layers.Layer):
 
     def __init__(self, max_turn_number, name=None):
-        super(CustomSoftmax, self).__init__()
+        super(NuggetSoftmax, self).__init__()
         self.customer_indices = tf.range(start=0, delta=2, limit=max_turn_number)
         self.helpdesk_indices = tf.range(start=1, delta=2, limit=max_turn_number)
 
@@ -156,11 +171,11 @@ class CustomSoftmax(layers.Layer):
         customer_loss = tf.reduce_sum(customer_loss * customer_mask, axis=-1)
         helpdesk_loss = tf.reduce_sum(helpdesk_loss * helpdesk_mask, axis=-1)
         self.add_loss(tf.reduce_mean(customer_loss) + tf.reduce_mean(helpdesk_loss))
-        customer_prob = tf.nn.softmax(customer_logits, axis=-1) * customer_mask[:, :, None]
-        helpdesk_prob = tf.nn.softmax(helpdesk_logits, axis=-1) * helpdesk_mask[:, :, None]
+        customer_probs = tf.nn.softmax(customer_logits, axis=-1) * customer_mask[:, :, None]
+        helpdesk_probs = tf.nn.softmax(helpdesk_logits, axis=-1) * helpdesk_mask[:, :, None]
         # validate
-        cust_squared_error = tf.reduce_sum(tf.math.squared_difference(customer_prob, customer_labels), axis=-1)
-        help_squared_error = tf.reduce_sum(tf.math.squared_difference(helpdesk_prob, helpdesk_labels), axis=-1)
+        cust_squared_error = tf.reduce_sum(tf.math.squared_difference(customer_probs, customer_labels), axis=-1)
+        help_squared_error = tf.reduce_sum(tf.math.squared_difference(helpdesk_probs, helpdesk_labels), axis=-1)
 
         customer_rnss = -tf.experimental.numpy.log2(tf.math.sqrt(cust_squared_error / 2)) * customer_mask
         helpdesk_rnss = -tf.experimental.numpy.log2(tf.math.sqrt(help_squared_error / 2)) * helpdesk_mask
@@ -173,7 +188,7 @@ class CustomSoftmax(layers.Layer):
         rnss = (tf.reduce_mean(customer_rnss) + tf.reduce_mean(helpdesk_rnss)) / 2
         self.add_metric(rnss, name="rnss")
 
-        return customer_prob, helpdesk_prob
+        return customer_probs, helpdesk_probs
 
 
 # bert and return the top_vec
@@ -200,7 +215,7 @@ class Bert(layers.Layer):
         self.model = TFBertModel.from_pretrained(bert_name, config=self.config)
         self.model.resize_token_embeddings(embedding_size)
 
-    def call(self, inputs, task):
+    def call(self, inputs, encoder):
         # inputs = [input_ids, input_mask, input_type_ids, sentence_ids, sentence_mask]
 
         input_ids = inputs["input_ids"]
@@ -208,7 +223,7 @@ class Bert(layers.Layer):
         input_type_ids = inputs["input_type_ids"]
         outputs = self.model(input_ids=input_ids, attention_mask=input_mask, token_type_ids=input_type_ids,
                              training=True)
-        if task == "nugget":
+        if encoder == "transformer":
             x = outputs["last_hidden_state"]
             x *= tf.math.sqrt(tf.cast(768, tf.float32))
             # check_nan(x, name="bert_output")
@@ -221,9 +236,12 @@ class Bert(layers.Layer):
 
             # check_nan(sents_vec, name="sentence vec")
 
-            return sents_vec
+            return sents_vec  # [Batch_size, max_turn_number, hidden_size=768]
+
+        elif encoder == "baseline":
+            return outputs["pooler_output"]   # [Batch_size, hidden_size=768]
         else:
-            return None
+            raise ValueError("encoder neither transformer nor baseline")
 
 
 class XLNet(layers.Layer):
@@ -241,15 +259,16 @@ class XLNet(layers.Layer):
             raise ValueError("Language must be English or Chinese!")
 
         self.model.resize_token_embeddings(embedding_size)
+        self.pooler = layers.GlobalAveragePooling1D()
 
-    def call(self, inputs, task):
+    def call(self, inputs, encoder):
         # inputs = [input_ids, input_mask, input_type_ids, sentence_ids, sentence_mask]
         input_ids = inputs["input_ids"]
         input_mask = inputs["input_mask"]
         input_type_ids = inputs["input_type_ids"]
         outputs = self.model(input_ids=input_ids, attention_mask=input_mask, token_type_ids=input_type_ids)
 
-        if task == "nugget":
+        if encoder == "transformer":
             x = outputs.last_hidden_state
             x *= tf.math.sqrt(tf.cast(768, tf.float32))
 
@@ -262,9 +281,15 @@ class XLNet(layers.Layer):
 
             check_nan(sents_vec, name="sentence vec")
 
-            return sents_vec
+            return sents_vec  # [Batch_size, max_turn_number, hidden_size=768]
+
+        elif encoder == "baseline":
+            last_hidden_states = outputs.last_hidden_state
+
+            return self.pooler(last_hidden_states)  # [Batch_size, hidden_size=768]
+
         else:
-            return None
+            raise ValueError("encoder neither transformer nor baseline")
 
 
 class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
@@ -284,7 +309,8 @@ class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
 
 
 def create_dialogue_model(plm_name, language, max_turn_number, task, embedding_size,
-                          encoder="transformer", max_len=512, hidden_size=768, ff_size=200, heads=8, layer_num=1, dropout=0.1):
+                          encoder="transformer", max_len=512, hidden_size=768, ff_size=200, heads=8, layer_num=1,
+                          dropout=0.1):
     # tf.keras.backend.set_floatx('float16')
     if plm_name == "BERT":
         plm = Bert(language=language, embedding_size=embedding_size)
@@ -295,15 +321,13 @@ def create_dialogue_model(plm_name, language, max_turn_number, task, embedding_s
     else:
         raise ValueError("plm not in (BERT, XLNet)")
 
-    custom_dense = CustomDense(customer_dim=4, helpdesk_dim=3, max_turn_number=max_turn_number, name="customer dense")
-    custom_softmax = CustomSoftmax(max_turn_number=max_turn_number, name="custom Softmax")
+    if task not in ["nugget", "quality"]:
+        raise ValueError("task must be nugget or quality")
+    if encoder not in ["transformer", "baseline"]:
+        raise ValueError("encoder must be transformer or baseline")
 
-    if max_turn_number % 2 == 1:
-        customer_turn = max_turn_number // 2 + 1
-        helpdesk_turn = max_turn_number // 2
-    else:
-        customer_turn = max_turn_number // 2
-        helpdesk_turn = max_turn_number // 2
+    customer_turn = (max_turn_number // 2) + 1 if max_turn_number % 2 == 1 else (max_turn_number // 2)
+    helpdesk_turn = (max_turn_number // 2)
 
     # define inputs
     input_ids = tf.keras.Input(shape=(max_len,), dtype=tf.int32, name="input_ids")
@@ -313,43 +337,54 @@ def create_dialogue_model(plm_name, language, max_turn_number, task, embedding_s
     sentence_masks = tf.keras.Input(shape=(max_turn_number,), dtype=tf.int32, name="sentence_masks")
     customer_labels = tf.keras.Input(shape=(customer_turn, 4), dtype=tf.float32, name="customer_labels")
     helpdesk_labels = tf.keras.Input(shape=(helpdesk_turn, 3), dtype=tf.float32, name="helpdesk_labels")
+    quality_labels = tf.keras.Input(shape=(3, 5), dtype=tf.float32, name="quality_labels")
 
-    inputs = [input_ids, input_mask, input_type_ids, sentence_ids, sentence_masks, customer_labels, helpdesk_labels]
-
-    # define graph
+    # define graph1
     if task == "nugget":
         encoder = TransformerEncoder(d_model=hidden_size, num_heads=heads, d_ff=ff_size, rate=dropout,
                                      num_layers=layer_num)
+
+        nugget_dense = NuggetDense(customer_dim=4, helpdesk_dim=3, max_turn_number=max_turn_number,
+                                   name="customer dense")
+        nugget_softmax = NuggetSoftmax(max_turn_number=max_turn_number, name="custom Softmax")
+
+        inputs = [input_ids, input_mask, input_type_ids, sentence_ids, sentence_masks, customer_labels, helpdesk_labels]
+
         plm_inputs = {
             "input_ids": input_ids, "input_mask": input_mask, "input_type_ids": input_type_ids,
             "sentence_ids": sentence_ids, "sentence_masks": sentence_masks
         }
-        sents_vec = plm(inputs=plm_inputs, task=task)  # [Batch, max_turn_number, hidden_size]
+        sents_vec = plm(inputs=plm_inputs, encoder="transformer")  # [Batch, max_turn_number, hidden_size]
         sents_vec = encoder(x=sents_vec, training=True, mask=sentence_masks)
 
-        customer_logits, helpdesk_logits = custom_dense(sents_vec, mask=sentence_masks)
+        customer_logits, helpdesk_logits = nugget_dense(sents_vec, mask=sentence_masks)
 
         softmax_inputs = {
             "customer_logits": customer_logits, "helpdesk_logits": helpdesk_logits,
             "customer_labels": customer_labels, "helpdesk_labels": helpdesk_labels
         }
-        customer_prob, helpdesk_prob = custom_softmax(softmax_inputs, mask=sentence_masks)
+        customer_probs, helpdesk_probs = nugget_softmax(softmax_inputs, mask=sentence_masks)
 
-        outputs = [customer_prob, helpdesk_prob]
+        outputs = [customer_probs, helpdesk_probs]
 
         opt = tf.keras.optimizers.Adam(beta_1=0.9, beta_2=0.98, lr=1e-5)
 
         model = tf.keras.Model(inputs=inputs, outputs=outputs, name="dialogue_nugget")
         model.compile(optimizer=opt, run_eagerly=True)
 
-    elif task == "quality":
-        if encoder == "transformer":
-            encoder = TransformerEncoder(d_model=hidden_size, num_heads=heads, d_ff=ff_size, rate=dropout,
-                                         num_layers=layer_num)
-        return None
-
-
     else:
-        model = None
-        raise ValueError("task must be nugget or quality!")
+        # task == quality
+        inputs = [input_ids, input_mask, input_type_ids, sentence_ids, sentence_masks, quality_labels]
+
+        plm_inputs = {
+            "input_ids": input_ids, "input_mask": input_mask, "input_type_ids": input_type_ids,
+            "sentence_ids": sentence_ids, "sentence_masks": sentence_masks
+        }
+
+        if encoder == "baseline":
+            dialogue_vecs = plm(inputs=plm_inputs, encoder=encoder)
+            encoder = Baseline()
+            quality_logits = encoder(dialogue_vecs)
+
+
     return model
