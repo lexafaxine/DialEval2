@@ -44,11 +44,11 @@ class Trainer(object):
                                                                       language=FLAGS.language)
         self.processor, embedding_size = create_processor(plm=FLAGS.plm, max_len=FLAGS.max_len, language=FLAGS.language)
 
-        self.train_dataset = create_dataset(processor=processor, json_path=str(self.train_path),
+        self.train_dataset = create_dataset(processor=self.processor, json_path=str(self.train_path),
                                             task=FLAGS.task,
                                             shuffle_buffer_size=FLAGS.shuffle_buffer_size,
                                             batch_size=FLAGS.batch_size)
-        self.val_dataset = create_dataset(processor=processor, json_path=str(self.dev_path),
+        self.val_dataset = create_dataset(processor=self.processor, json_path=str(self.dev_path),
                                           task=FLAGS.task,
                                           shuffle_buffer_size=FLAGS.shuffle_buffer_size,
                                           batch_size=FLAGS.batch_size)
