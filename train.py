@@ -50,7 +50,7 @@ class Trainer(object):
         self.model = create_dialogue_model(plm_name=FLAGS.plm, language=FLAGS.language,
                                            max_turn_number=FLAGS.max_turn_number,
                                            embedding_size=embedding_size, max_len=FLAGS.max_len, ff_size=FLAGS.ff_size,
-                                           layer_num=FLAGS.layer_num,
+                                           layer_num=FLAGS.layer_num, encoder=FLAGS.encoder,
                                            dropout=FLAGS.dropout, task=FLAGS.task)
 
         if log_to_tensorboard:

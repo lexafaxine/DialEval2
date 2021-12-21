@@ -45,21 +45,6 @@ def point_wise_feed_forward_network(d_model, dff):
     ])
 
 
-# baseline quality model: just bert
-class Baseline(layers.Layer):
-    def __init__(self):
-        super(Baseline, self).__init__()
-        self.dense_layers = [layers.Dense(5, activation='relu') for _ in range(3)]
-
-    def call(self, x):
-        quality_labels = []
-        for i in range(3):
-            quality_label = self.dense_layers[i](x)
-            quality_labels.append(quality_label)
-
-        return tf.stack(quality_labels)
-
-
 # encoder transformer layer
 class TransformerEncoderLayer(layers.Layer):
     def __init__(self, d_model, num_heads, d_ff, rate=0.1):
@@ -148,6 +133,33 @@ class NuggetDense(layers.Layer):
         return customer_logits, helpdesk_logits
 
 
+class QualityDense(layers.Layer):
+    '''input = [Batch_size, hidden_size] if encoder=baseline, or
+    input = [Batch_size, max_turn_number, hidden_size] (need a pooler)'''
+
+    def __init__(self, encoder):
+        super(QualityDense, self).__init__()
+        self.pooler = layers.GlobalAveragePooling1D()
+        self.encoder = encoder
+        self.dense_layers = [layers.Dense(5, activation='relu') for _ in range(3)]
+
+    def call(self, x):
+        quality_logits = []
+        if self.encoder == "baseline":
+            # input = [Batch_size, hidden_size=768]
+            dialogue_repr = x
+
+        else:
+            # encoder = "transformer" and input = [Batch_size, max_turn_number, hidden_size]
+            dialogue_repr = self.pooler(x)
+
+        for i in range(3):
+            quality_label = self.dense_layers[i](dialogue_repr)
+            quality_logits.append(quality_label)
+
+        return tf.stack(quality_logits, axis=1)
+
+
 class NuggetSoftmax(layers.Layer):
 
     def __init__(self, max_turn_number, name=None):
@@ -191,10 +203,54 @@ class NuggetSoftmax(layers.Layer):
         return customer_probs, helpdesk_probs
 
 
+class QualitySoftmax(layers.Layer):
+
+    def __init__(self):
+        super(QualitySoftmax, self).__init__()
+
+    def call(self, inputs):
+        # inputs = [Batch, [3,5]]
+        quality_logits = inputs["quality_logits"]
+        quality_labels = inputs["quality_labels"]
+
+        loss = tf.nn.softmax_cross_entropy_with_logits(quality_labels, quality_logits, axis=-1)  # [batch, 3]
+        mean_loss = tf.reduce_mean(loss, axis=-1)
+
+        self.add_loss(tf.reduce_mean(mean_loss))
+        # softmax
+        quality_probs = []
+
+        for logits in quality_logits:
+            quality_probs.append(tf.nn.softmax(logits, axis=-1))
+
+        # validate
+        def get_score(inputs):
+            accuracy = []
+            logits = inputs[0]
+            probs = tf.nn.softmax(logits, axis=-1)
+            labels = inputs[1]
+            for i in range(3):
+                cum_p, cum_q = tf.math.cumsum(probs[i]), tf.math.cumsum(labels[i])
+                accuracy.append(tf.math.reduce_sum(tf.math.abs(cum_p - cum_q)) / len(cum_p))
+
+            return tf.convert_to_tensor(accuracy)
+
+        score_inputs = tf.stack([quality_logits, quality_labels], axis=1)
+
+        batch_accuracy = tf.map_fn(get_score, score_inputs, fn_output_signature=tf.TensorSpec(shape=(3), dtype=tf.float32))
+
+        scores = -tf.experimental.numpy.log2(tf.reduce_mean(batch_accuracy, axis=0))
+
+        self.add_metric(scores[0], name="A")
+        self.add_metric(scores[1], name="E")
+        self.add_metric(scores[2], name="S")
+
+        return quality_probs
+
 # bert and return the top_vec
 class Bert(layers.Layer):
 
-    def __init__(self, language, embedding_size):
+    def __init__(self, language, embedding_size, encoder):
         super(Bert, self).__init__()
         # Load Transformers config
         if language == "Chinese":
@@ -205,7 +261,7 @@ class Bert(layers.Layer):
         else:
             bert_name = None
             raise ValueError("language must be Chinese or English")
-
+        self.encoder = encoder
         self.config = BertConfig.from_pretrained(bert_name)
         self.config.output_hidden_states = True
         # Load Bert Tokenizer
@@ -215,7 +271,7 @@ class Bert(layers.Layer):
         self.model = TFBertModel.from_pretrained(bert_name, config=self.config)
         self.model.resize_token_embeddings(embedding_size)
 
-    def call(self, inputs, encoder):
+    def call(self, inputs):
         # inputs = [input_ids, input_mask, input_type_ids, sentence_ids, sentence_mask]
 
         input_ids = inputs["input_ids"]
@@ -223,7 +279,7 @@ class Bert(layers.Layer):
         input_type_ids = inputs["input_type_ids"]
         outputs = self.model(input_ids=input_ids, attention_mask=input_mask, token_type_ids=input_type_ids,
                              training=True)
-        if encoder == "transformer":
+        if self.encoder == "transformer":
             x = outputs["last_hidden_state"]
             x *= tf.math.sqrt(tf.cast(768, tf.float32))
             # check_nan(x, name="bert_output")
@@ -238,15 +294,15 @@ class Bert(layers.Layer):
 
             return sents_vec  # [Batch_size, max_turn_number, hidden_size=768]
 
-        elif encoder == "baseline":
-            return outputs["pooler_output"]   # [Batch_size, hidden_size=768]
+        elif self.encoder == "baseline":
+            return outputs["pooler_output"]  # [Batch_size, hidden_size=768]
         else:
             raise ValueError("encoder neither transformer nor baseline")
 
 
 class XLNet(layers.Layer):
 
-    def __init__(self, language, embedding_size):
+    def __init__(self, language, embedding_size, encoder):
         super(XLNet, self).__init__()
         if language == "English":
             self.tokenizer = XLNetTokenizer.from_pretrained('xlnet-base-cased')
@@ -260,15 +316,16 @@ class XLNet(layers.Layer):
 
         self.model.resize_token_embeddings(embedding_size)
         self.pooler = layers.GlobalAveragePooling1D()
+        self.encoder = encoder
 
-    def call(self, inputs, encoder):
+    def call(self, inputs):
         # inputs = [input_ids, input_mask, input_type_ids, sentence_ids, sentence_mask]
         input_ids = inputs["input_ids"]
         input_mask = inputs["input_mask"]
         input_type_ids = inputs["input_type_ids"]
         outputs = self.model(input_ids=input_ids, attention_mask=input_mask, token_type_ids=input_type_ids)
 
-        if encoder == "transformer":
+        if self.encoder == "transformer":
             x = outputs.last_hidden_state
             x *= tf.math.sqrt(tf.cast(768, tf.float32))
 
@@ -283,7 +340,7 @@ class XLNet(layers.Layer):
 
             return sents_vec  # [Batch_size, max_turn_number, hidden_size=768]
 
-        elif encoder == "baseline":
+        elif self.encoder == "baseline":
             last_hidden_states = outputs.last_hidden_state
 
             return self.pooler(last_hidden_states)  # [Batch_size, hidden_size=768]
@@ -312,19 +369,20 @@ def create_dialogue_model(plm_name, language, max_turn_number, task, embedding_s
                           encoder="transformer", max_len=512, hidden_size=768, ff_size=200, heads=8, layer_num=1,
                           dropout=0.1):
     # tf.keras.backend.set_floatx('float16')
+    if task not in ["nugget", "quality"]:
+        raise ValueError("task must be nugget or quality")
+
+    if encoder not in ["transformer", "baseline"]:
+        raise ValueError("encoder must be transformer or baseline")
+
     if plm_name == "BERT":
-        plm = Bert(language=language, embedding_size=embedding_size)
+        plm = Bert(language=language, embedding_size=embedding_size, encoder=encoder)
 
     elif plm_name == "XLNet":
-        plm = XLNet(language=language, embedding_size=embedding_size)
+        plm = XLNet(language=language, embedding_size=embedding_size, encoder=encoder)
 
     else:
         raise ValueError("plm not in (BERT, XLNet)")
-
-    if task not in ["nugget", "quality"]:
-        raise ValueError("task must be nugget or quality")
-    if encoder not in ["transformer", "baseline"]:
-        raise ValueError("encoder must be transformer or baseline")
 
     customer_turn = (max_turn_number // 2) + 1 if max_turn_number % 2 == 1 else (max_turn_number // 2)
     helpdesk_turn = (max_turn_number // 2)
@@ -354,7 +412,7 @@ def create_dialogue_model(plm_name, language, max_turn_number, task, embedding_s
             "input_ids": input_ids, "input_mask": input_mask, "input_type_ids": input_type_ids,
             "sentence_ids": sentence_ids, "sentence_masks": sentence_masks
         }
-        sents_vec = plm(inputs=plm_inputs, encoder="transformer")  # [Batch, max_turn_number, hidden_size]
+        sents_vec = plm(inputs=plm_inputs)  # [Batch, max_turn_number, hidden_size]
         sents_vec = encoder(x=sents_vec, training=True, mask=sentence_masks)
 
         customer_logits, helpdesk_logits = nugget_dense(sents_vec, mask=sentence_masks)
@@ -372,6 +430,8 @@ def create_dialogue_model(plm_name, language, max_turn_number, task, embedding_s
         model = tf.keras.Model(inputs=inputs, outputs=outputs, name="dialogue_nugget")
         model.compile(optimizer=opt, run_eagerly=True)
 
+        return model
+
     else:
         # task == quality
         inputs = [input_ids, input_mask, input_type_ids, sentence_ids, sentence_masks, quality_labels]
@@ -382,9 +442,30 @@ def create_dialogue_model(plm_name, language, max_turn_number, task, embedding_s
         }
 
         if encoder == "baseline":
-            dialogue_vecs = plm(inputs=plm_inputs, encoder=encoder)
-            encoder = Baseline()
-            quality_logits = encoder(dialogue_vecs)
+            dialogue_repr = plm(plm_inputs)
+            quality_dense = QualityDense(encoder=encoder)
+            quality_logits = quality_dense(dialogue_repr)
 
+        else:
+            # encoder == "transformer"
+            encoder = TransformerEncoder(d_model=hidden_size, num_heads=heads, d_ff=ff_size, rate=dropout,
+                                         num_layers=layer_num)
 
-    return model
+            sents_vec = plm(inputs=plm_inputs)
+            sents_vec = encoder(x=sents_vec, training=True, mask=sentence_masks)
+            quality_dense = QualityDense(encoder=encoder)
+            quality_logits = quality_dense(sents_vec)
+
+        quality_softmax = QualitySoftmax()
+        softmax_inputs = {
+            "quality_logits": quality_logits,
+            "quality_labels": quality_labels
+        }
+        quality_probs = quality_softmax(softmax_inputs)
+
+        outputs = quality_probs
+        opt = tf.keras.optimizers.Adam(beta_1=0.9, beta_2=0.98, lr=1e-5)
+        model = tf.keras.Model(inputs=inputs, outputs=outputs, name="dialogue_quality")
+        model.compile(optimizer=opt, run_eagerly=True)
+
+        return model

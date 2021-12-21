@@ -37,6 +37,8 @@ def parse_args():
                         help="Pretrained Language Model name: BERT or XLNet", required=True)
     parser.add_argument("--max_turn_number", default=7, type=int,
                         help="Max diague turn for dialogue-level model")
+    parser.add_argument("--encoder", default="transformer", type=str,
+                        help="baseline or transformer")
 
     # Model Hyper-parameters
     parser.add_argument("--transformer_hidden_size", default=768, type=int,

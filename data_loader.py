@@ -144,7 +144,6 @@ def create_dataset(processor, json_path, mode, task, shuffle_buffer_size=200, ba
                                "input_type_ids": tf.int32,
                                "sentence_ids": tf.int32,
                                "sentence_masks": tf.int32,
-                               "customer_labels": tf.float32,
                                "quality_labels": tf.float32})
             )
 

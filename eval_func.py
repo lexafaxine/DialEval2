@@ -213,7 +213,7 @@ def evaluate_from_list(pred, truth, alpha, strict):
     id2truth = {d["id"]: d for d in truth}
 
     results = evaluate_nugget(id2pred=id2pred, id2truth=id2truth, alpha=alpha, strict=strict)
-
+    print(results)
     return results
 
 
