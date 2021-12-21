@@ -10,6 +10,7 @@ import pandas as pd
 
 PROJECT_DIR = Path("/content/drive/MyDrive/dialogue")
 NUGGET_RESULT = PROJECT_DIR / "nugget_result.csv"
+QUALITY_RESULT = PROJECT_DIR / "quality.csv"
 
 flags = tf.compat.v1.flags
 
@@ -28,6 +29,12 @@ class Trainer(object):
         if FLAGS.language not in ["Chinese", "English"]:
             raise ValueError("Language must be Chinese or English!")
 
+        if FLAGS.task not in ["quality", "nugget"]:
+            raise ValueError("task must be quality or nugget")
+
+        if FLAGS.encoder not in ["baseline", "transformer"]:
+            raise ValueError("encoder must be baseline or transformer")
+
         self.lang = "zh" if FLAGS.language == "Chinese" else "en"
         self.logger.info("Task: " + str(FLAGS.task))
         self.logger.info("Language: " + str(FLAGS.language))
@@ -35,14 +42,14 @@ class Trainer(object):
         # Load Data
         self.train_path, self.dev_path, self.test_path = prepare_data(data_dir=FLAGS.data_dir,
                                                                       language=FLAGS.language)
-        processor, embedding_size = create_processor(plm=FLAGS.plm, max_len=FLAGS.max_len, language=FLAGS.language)
+        self.processor, embedding_size = create_processor(plm=FLAGS.plm, max_len=FLAGS.max_len, language=FLAGS.language)
 
         self.train_dataset = create_dataset(processor=processor, json_path=str(self.train_path),
-                                            mode="train", task=FLAGS.task,
+                                            task=FLAGS.task,
                                             shuffle_buffer_size=FLAGS.shuffle_buffer_size,
                                             batch_size=FLAGS.batch_size)
         self.val_dataset = create_dataset(processor=processor, json_path=str(self.dev_path),
-                                          mode="validate", task=FLAGS.task,
+                                          task=FLAGS.task,
                                           shuffle_buffer_size=FLAGS.shuffle_buffer_size,
                                           batch_size=FLAGS.batch_size)
 
@@ -61,9 +68,14 @@ class Trainer(object):
         model_path = FLAGS.checkpoint_dir + "/" + get_model_name(FLAGS.plm, language=self.lang,
                                                                  task=FLAGS.task)
         os.mkdir(model_path)
-        callback = tf.keras.callbacks.ModelCheckpoint(filepath=model_path, save_weights_only=False,
-                                                      verbose=1, monitor="val_rnss",
-                                                      save_best_only=True, mode="max")
+        if FLAGS.task == "nugget":
+            callback = tf.keras.callbacks.ModelCheckpoint(filepath=model_path, save_weights_only=False,
+                                                          verbose=1, monitor="val_rnss",
+                                                          save_best_only=True, mode="max")
+        else:
+            callback = tf.keras.callbacks.ModelCheckpoint(filepath=model_path, save_weights_only=False,
+                                                          verbose=1, monitor="val_nmd_A",
+                                                          save_best_only=True, mode="max")
         tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
         train_steps = (4090 // FLAGS.batch_size) + 1
         val_steps = (300 // FLAGS.batch_size) + 1
@@ -77,19 +89,15 @@ class Trainer(object):
         tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.INFO)
         self.logger.info("Start Validating...")
         dialogue_model = tf.keras.models.load_model(model_path)
-        dev_inputs = create_predict_inputs(self.dev_path,
-                                           plm=FLAGS.plm, max_len=FLAGS.max_len,
-                                           language=FLAGS.language, task=FLAGS.task)
+        dev_inputs = create_predict_inputs(processor=self.processor, json_path=self.dev_path, task=FLAGS.task)
 
         output_file = Path(model_path) / "submission.json"
 
         submission = pred_to_submission(inputs=dev_inputs, output_file=output_file, write_to_file=True,
                                         model=dialogue_model, task=FLAGS.task)
 
-        results = evaluate(output_file, self.dev_path, strict=True)
-
-        self.logger.info("Evaluate Result: {jsd:" + str(results["jsd"]) + ", rnss:" + str(results["rnss"]) + "}")
-
+        results = evaluate(task=FLAGS.task, pred_path=output_file, truth_path=self.dev_path, strict=True)
+        # self.logger.info("Evaluate Result: {jsd:" + str(results["jsd"]) + ", rnss:" + str(results["rnss"]) + "}")
         if FLAGS.task == "nugget":
             result_dict = {
                 'ckpt': [model_path],
@@ -103,6 +111,19 @@ class Trainer(object):
 
             else:
                 df.to_csv(NUGGET_RESULT, mode='a', header=False, index=False)
+
+        else:
+            result_dict = {
+                'ckpt': [model_path],
+                'jsd': [results["jsd"]],
+                'rnss': [results["rnss"]]
+            }
+            df = pd.DataFrame(result_dict)
+
+            if not os.path.isfile(QUALITY_RESULT):
+                df.to_csv(QUALITY_RESULT, index=False)
+            else:
+                df.to_csv(QUALITY_RESULT, mode='a', header=False, index=False)
 
         return results
 

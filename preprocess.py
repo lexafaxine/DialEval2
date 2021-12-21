@@ -169,20 +169,21 @@ class Processor(object):
 
         self.tokenizer_length = len(self.tokenizer)
 
-    def process_dialogue(self, dialogue, mode):
+    def process_dialogue(self, dialogue, is_test):
 
         turn_number = len(dialogue["turns"])
-        if mode == "train" or "validate":
+        if is_test is False:
             annotations = dialogue["annotations"]
             customer_labels, helpdesk_labels = parse_nugget(annotations=annotations, dialogue_length=turn_number)
             quality_labels = parse_quality(annotations)
-        elif mode == "test":
-            quality_labels = [[1/len(QUALITY_SCALES)] * len(QUALITY_SCALES)] * len(QUALITY_MEASURES)
-            customer_labels = ["CNaN"] * turn_number
-            helpdesk_labels = ["HNaN"] * turn_number
 
         else:
-            raise ValueError("mode must be train, dev or test")
+            quality_labels = [[1/len(QUALITY_SCALES)] * len(QUALITY_SCALES)] * len(QUALITY_MEASURES)
+            customer_turn = (turn_number // 2) + 1 if turn_number % 2 == 1 else turn_number // 2
+            helpdesk_turn = turn_number // 2
+
+            customer_labels = ["CNaN"] * customer_turn
+            helpdesk_labels = ["HNaN"] * helpdesk_turn
 
         # assert turn_number == len(quality_labels)
         assert turn_number == len(customer_labels) + len(helpdesk_labels)

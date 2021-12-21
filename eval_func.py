@@ -14,6 +14,8 @@ import tensorflow as tf
 
 CUSTOMER_NUGGET_TYPES = ('CNUG0', 'CNUG', 'CNUG*', 'CNaN')
 HELPDESK_NUGGET_TYPES = ('HNUG', 'HNUG*', 'HNaN')
+QUALITY_MEASURES = ("A", "E", "S")
+QUALITY_SCALES = ('2', '1', '0', '-1', '-2')
 
 
 def normalize(pred, truth):
@@ -135,9 +137,56 @@ def evaluate_nugget(id2pred, id2truth, alpha=.5, strict=True):
     }
 
 
+def evaluate_quality(id2pred, id2truth, strict=False):
+    def _evaluate_quality(measure):
+        def _truth2prob(labels):
+            c = Counter(labels)
+            prob = []
+            for scale in QUALITY_SCALES:
+                score = c.pop(scale, 0)
+                prob.append(score)
+            prob = np.array(prob, dtype=np.float64)
+            prob /= prob.sum()
+            return prob
+
+        def _pred_2_prob(score_dict):
+            score_dict = deepcopy(score_dict)
+            prob = np.array(
+                [score_dict.pop(scale, 0) for scale in QUALITY_SCALES])
+            if score_dict:
+                raise ValueError("contain illegal quality scale in prediction")
+            return prob
+
+        if strict:
+            check_missing_prediction(id2pred, id2truth)
+
+        result = {}
+        for idx, prediction in id2pred.items():
+            truth = id2truth[idx]
+            prediction = prediction["quality"]
+            for score_key in prediction:
+                truth_labels = (str(anno["quality"][score_key])
+                                for anno in truth["annotations"])
+                result.setdefault(score_key, [])
+                score = measure(
+                    _pred_2_prob(prediction[score_key]),
+                    _truth2prob(truth_labels))
+                result[score_key].append(score)
+
+        for key, value in result.items():
+            # use -log2 to make the score more readable.
+            result[key] = -log2(np.mean(value))
+        return result
+
+    return {
+        "rsnod": _evaluate_quality(rsnod),
+        "nmd": _evaluate_quality(normalized_match_dist)
+    }
+
+
 # dev_inputs = (dialogue_id, [input_ids, input_mask, input_type_ids, dialogue_length, turn_number])
 
-def pred_to_dict(customer_prob, helpdesk_prob, dialogue_length):
+def nugget_pred_to_dict(customer_prob, helpdesk_prob, dialogue_length):
     customer_length = (dialogue_length // 2) + 1 if dialogue_length % 2 == 1 else dialogue_length // 2
     helpdesk_length = dialogue_length // 2
 
@@ -165,6 +214,16 @@ def pred_to_dict(customer_prob, helpdesk_prob, dialogue_length):
     return nugget_list
 
 
+def quality_pred_to_dict(quality_probs):
+    result = {}
+    for measure, quality_prob in zip(QUALITY_MEASURES, quality_probs):
+        result[str(measure)] = {}
+        for scale, prob in zip(QUALITY_SCALES, quality_probs):
+            result[str(measure)][str(scale)] = float(prob)
+
+    return result
+
+
 def pred_to_submission(inputs, model, task, output_file, write_to_file=True):
     # model_input = (dialogue_id, [input_ids, input_mask, input_type_ids, sentence_ids, sentence_mask,
     # customer_labels, helpdesk_labels])
@@ -181,14 +240,26 @@ def pred_to_submission(inputs, model, task, output_file, write_to_file=True):
             customer_prob, helpdesk_prob = model.predict(x=model_input)
             customer_prob = tf.squeeze(customer_prob, axis=0)
             helpdesk_prob = tf.squeeze(helpdesk_prob, axis=0)
-            nugget_list = pred_to_dict(customer_prob, helpdesk_prob, dialogue_length)
+            nugget_list = nugget_pred_to_dict(customer_prob, helpdesk_prob, dialogue_length)
             submission_format = {
                 "id": dialogue_id,
                 "nugget": nugget_list  # a list of dict
             }
             submission.append(submission_format)
             count += 1
-            print("Predicting ", count, " / 300 dialogues...")
+            print("Evaluating ", count, " / 300 dialogues...")
+
+        else:
+            model_input = dialogue[1]
+            quality_probs = model.predict(x=model_input)
+            result = quality_pred_to_dict(quality_probs)
+            submission_format = {
+                "id": dialogue_id,
+                "quality": result
+            }
+            submission.append(submission_format)
+            count += 1
+            print("Evaluating ", count, " / 300 dialogues...")
 
     if write_to_file:
         with open(output_file, 'w') as f:
@@ -203,7 +274,7 @@ def check_missing_prediction(id2pred, id2truth):
             raise ValueError("Missing prediction for dialogue id %s" % dialogue_id)
 
 
-def evaluate_from_list(pred, truth, alpha, strict):
+def evaluate_from_list(task, pred, truth, alpha, strict):
     if not pred:
         raise ValueError("Prediction JSON is empty")
     if not truth:
@@ -211,14 +282,19 @@ def evaluate_from_list(pred, truth, alpha, strict):
 
     id2pred = {d["id"]: d for d in pred}
     id2truth = {d["id"]: d for d in truth}
+    results = {}
+    if task == "nugget":
+        results = evaluate_nugget(id2pred=id2pred, id2truth=id2truth, alpha=alpha, strict=strict)
 
-    results = evaluate_nugget(id2pred=id2pred, id2truth=id2truth, alpha=alpha, strict=strict)
+    else:
+        results = evaluate_quality(id2pred=id2pred, id2truth=id2truth, strict=strict)
+
     print(results)
     return results
 
 
-def evaluate(pred_path, truth_path, alpha=.5, strict=False):
+def evaluate(task, pred_path, truth_path, alpha=.5, strict=False):
     pred = json.load(open(pred_path, encoding="utf-8"))
     truth = json.load(open(truth_path, encoding="utf-8"))
 
-    return evaluate_from_list(pred, truth, alpha, strict)
+    return evaluate_from_list(task, pred, truth, alpha, strict)

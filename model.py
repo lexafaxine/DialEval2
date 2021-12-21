@@ -241,9 +241,9 @@ class QualitySoftmax(layers.Layer):
 
         scores = -tf.experimental.numpy.log2(tf.reduce_mean(batch_accuracy, axis=0))
 
-        self.add_metric(scores[0], name="A")
-        self.add_metric(scores[1], name="E")
-        self.add_metric(scores[2], name="S")
+        self.add_metric(scores[0], name="nmd_A")
+        self.add_metric(scores[1], name="nmd_E")
+        self.add_metric(scores[2], name="nmd_S")
 
         return quality_probs
 
