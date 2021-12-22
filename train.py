@@ -115,8 +115,12 @@ class Trainer(object):
         else:
             result_dict = {
                 'ckpt': [model_path],
-                'jsd': [results["jsd"]],
-                'rnss': [results["rnss"]]
+                'rsnod-A': [results["rsnod"]["A"]],
+                'rsnod-E': [results["rsnod"]["E"]],
+                'rsnod-S': [results["rsnod"]["S"]],
+                'nmd-A': [results["nmd"]["A"]],
+                'nmd-E': [results["nmd"]["E"]],
+                'nmd-S': [results["nmd"]["S"]],
             }
             df = pd.DataFrame(result_dict)
 
