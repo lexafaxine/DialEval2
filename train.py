@@ -69,11 +69,11 @@ class Trainer(object):
                                                                  task=FLAGS.task)
         os.mkdir(model_path)
         if FLAGS.task == "nugget":
-            callback = tf.keras.callbacks.ModelCheckpoint(filepath=model_path, save_weights_only=False,
+            callback = tf.keras.callbacks.ModelCheckpoint(filepath=model_path, save_weights_only=True,
                                                           verbose=1, monitor="val_rnss",
                                                           save_best_only=True, mode="max")
         else:
-            callback = tf.keras.callbacks.ModelCheckpoint(filepath=model_path, save_weights_only=False,
+            callback = tf.keras.callbacks.ModelCheckpoint(filepath=model_path, save_weights_only=True,
                                                           verbose=1, monitor="val_nmd_A",
                                                           save_best_only=True, mode="max")
         tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
@@ -88,7 +88,7 @@ class Trainer(object):
     def validate(self, model_path):
         tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.INFO)
         self.logger.info("Start Validating...")
-        dialogue_model = tf.keras.models.load_model(model_path)
+        dialogue_model = self.model.load_weights(model_path)
         dev_inputs = create_predict_inputs(processor=self.processor, json_path=self.dev_path, task=FLAGS.task)
 
         output_file = Path(model_path) / "submission.json"
