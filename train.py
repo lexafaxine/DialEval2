@@ -18,7 +18,7 @@ flags = tf.compat.v1.flags
 def get_model_name(plm, language, task):
     now = datetime.now()
     date_time = now.strftime("%y%m%d%H%M")
-    return plm + "_" + language + "_" + task + "_" + date_time
+    return plm + "_" + language + "_" + task + "_" + date_time + "/"
 
 
 class Trainer(object):

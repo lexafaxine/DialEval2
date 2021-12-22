@@ -182,8 +182,8 @@ class Processor(object):
             customer_turn = (turn_number // 2) + 1 if turn_number % 2 == 1 else turn_number // 2
             helpdesk_turn = turn_number // 2
 
-            customer_labels = ["CNaN"] * customer_turn
-            helpdesk_labels = ["HNaN"] * helpdesk_turn
+            customer_labels = [[1. / len(CUSTOMER_NUGGET_TYPES)] * len(CUSTOMER_NUGGET_TYPES)] * customer_turn
+            helpdesk_labels = [[1. / len(HELPDESK_NUGGET_TYPES)] * len(HELPDESK_NUGGET_TYPES)] * helpdesk_turn
 
         # assert turn_number == len(quality_labels)
         assert turn_number == len(customer_labels) + len(helpdesk_labels)
