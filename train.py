@@ -88,13 +88,13 @@ class Trainer(object):
     def validate(self, model_path):
         tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.INFO)
         self.logger.info("Start Validating...")
-        dialogue_model = self.model.load_weights(model_path)
+        self.model.load_weights(model_path)
         dev_inputs = create_predict_inputs(processor=self.processor, json_path=self.dev_path, task=FLAGS.task)
 
         output_file = Path(model_path) / "submission.json"
 
         submission = pred_to_submission(inputs=dev_inputs, output_file=output_file, write_to_file=True,
-                                        model=dialogue_model, task=FLAGS.task)
+                                        model=self.model, task=FLAGS.task)
 
         results = evaluate(task=FLAGS.task, pred_path=output_file, truth_path=self.dev_path, strict=True)
         # self.logger.info("Evaluate Result: {jsd:" + str(results["jsd"]) + ", rnss:" + str(results["rnss"]) + "}")
