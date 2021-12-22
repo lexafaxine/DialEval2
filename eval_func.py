@@ -218,7 +218,7 @@ def quality_pred_to_dict(quality_probs):
     result = {}
     for measure, quality_prob in zip(QUALITY_MEASURES, quality_probs):
         result[str(measure)] = {}
-        for scale, prob in zip(QUALITY_SCALES, quality_probs):
+        for scale, prob in zip(QUALITY_SCALES, quality_prob):
             result[str(measure)][str(scale)] = float(prob)
 
     return result
