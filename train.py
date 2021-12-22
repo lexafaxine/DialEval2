@@ -101,6 +101,7 @@ class Trainer(object):
         if FLAGS.task == "nugget":
             result_dict = {
                 'ckpt': [model_path],
+                'language': [FLAGS.language],
                 'jsd': [results["jsd"]],
                 'rnss': [results["rnss"]]
             }
@@ -115,6 +116,7 @@ class Trainer(object):
         else:
             result_dict = {
                 'ckpt': [model_path],
+                'language': [FLAGS.language],
                 'rsnod-A': [results["rsnod"]["A"]],
                 'rsnod-E': [results["rsnod"]["E"]],
                 'rsnod-S': [results["rsnod"]["S"]],
