@@ -113,7 +113,7 @@ class Trainer(object):
         if mode == "validate":
             truth_path = self.dev_path
         else:
-            truth_path = self.test_path[:-13] + ".json"
+            truth_path = str(self.test_path)[:-13] + ".json"
 
         results = evaluate(task=FLAGS.task, pred_path=output_file, truth_path=truth_path, strict=True)
         # self.logger.info("Evaluate Result: {jsd:" + str(results["jsd"]) + ", rnss:" + str(results["rnss"]) + "}")
