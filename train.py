@@ -9,8 +9,9 @@ from eval_func import pred_to_submission, evaluate
 import pandas as pd
 
 PROJECT_DIR = Path("/content/drive/MyDrive/dialogue")
-NUGGET_RESULT = PROJECT_DIR / "nugget_result.csv"
-QUALITY_RESULT = PROJECT_DIR / "quality.csv"
+NUGGET_RESULT = PROJECT_DIR / "dialogue_nugget.csv"
+BASELINE_QUALITY_RESULT = PROJECT_DIR / "baseline_quality.csv"
+TRANSFORMER_QUALITY_RESULT = PROJECT_DIR / "transformer_quality.csv"
 
 flags = tf.compat.v1.flags
 
@@ -126,10 +127,15 @@ class Trainer(object):
             }
             df = pd.DataFrame(result_dict)
 
-            if not os.path.isfile(QUALITY_RESULT):
-                df.to_csv(QUALITY_RESULT, index=False)
+            if FLAGS.baseline == "baseline":
+                quality_result = BASELINE_QUALITY_RESULT
             else:
-                df.to_csv(QUALITY_RESULT, mode='a', header=False, index=False)
+                quality_result = TRANSFORMER_QUALITY_RESULT
+
+            if not os.path.isfile(quality_result):
+                df.to_csv(quality_result, index=False)
+            else:
+                df.to_csv(quality_result, mode='a', header=False, index=False)
 
         return results
 
