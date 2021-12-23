@@ -114,6 +114,7 @@ class Trainer(object):
             truth_path = self.dev_path
         else:
             truth_path = str(self.test_path)[:-13] + ".json"
+            print(truth_path)
 
         results = evaluate(task=FLAGS.task, pred_path=output_file, truth_path=truth_path, strict=True)
         # self.logger.info("Evaluate Result: {jsd:" + str(results["jsd"]) + ", rnss:" + str(results["rnss"]) + "}")
@@ -147,7 +148,7 @@ class Trainer(object):
             }
             df = pd.DataFrame(result_dict)
 
-            if FLAGS.baseline == "baseline":
+            if FLAGS.encoder == "baseline":
                 quality_result = BASELINE_QUALITY_RESULT
             else:
                 quality_result = TRANSFORMER_QUALITY_RESULT
