@@ -86,23 +86,42 @@ class Trainer(object):
 
         return history, model_path
 
-    def validate(self, model_path):
+    def validate(self, model_path, mode):
+
+        if mode not in ["test", "validate"]:
+            raise ValueError("mode must be test or validate")
+
         tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.INFO)
         self.logger.info("Start Validating...")
         self.model.load_weights(model_path)
-        dev_inputs = create_predict_inputs(processor=self.processor, json_path=self.dev_path, task=FLAGS.task)
 
-        output_file = Path(model_path) / "submission.json"
+        if mode == "validate":
+            predict_path = self.dev_path
+        else:
+            predict_path = self.test_path
 
-        submission = pred_to_submission(inputs=dev_inputs, output_file=output_file, write_to_file=True,
+        predict_inputs = create_predict_inputs(processor=self.processor, json_path=predict_path, task=FLAGS.task)
+
+        if mode == "validate":
+            output_file = Path(model_path) / "val_submission.json"
+        else:
+            output_file = Path(model_path) / "test_submission.json"
+
+        submission = pred_to_submission(inputs=predict_inputs, output_file=output_file, write_to_file=True,
                                         model=self.model, task=FLAGS.task)
 
-        results = evaluate(task=FLAGS.task, pred_path=output_file, truth_path=self.dev_path, strict=True)
+        if mode == "validate":
+            truth_path = self.dev_path
+        else:
+            truth_path = self.test_path[:-13] + ".json"
+
+        results = evaluate(task=FLAGS.task, pred_path=output_file, truth_path=truth_path, strict=True)
         # self.logger.info("Evaluate Result: {jsd:" + str(results["jsd"]) + ", rnss:" + str(results["rnss"]) + "}")
         if FLAGS.task == "nugget":
             result_dict = {
                 'ckpt': [model_path],
                 'language': [FLAGS.language],
+                'mode': [mode],
                 'jsd': [results["jsd"]],
                 'rnss': [results["rnss"]]
             }
@@ -118,6 +137,7 @@ class Trainer(object):
             result_dict = {
                 'ckpt': [model_path],
                 'language': [FLAGS.language],
+                'mode': [mode],
                 'rsnod-A': [results["rsnod"]["A"]],
                 'rsnod-E': [results["rsnod"]["E"]],
                 'rsnod-S': [results["rsnod"]["S"]],
@@ -145,12 +165,12 @@ def prepare_data(data_dir, language):
 
     if language == "Chinese":
         train_path = data_dir / "train_cn.json"
-        test_path = data_dir / "test_cn.json"
+        test_path = data_dir / "test_cn_wo_anno.json"
         dev_path = data_dir / "dev_cn.json"
 
     else:
         train_path = data_dir / "train_en.json"
-        test_path = data_dir / "test_en.json"
+        test_path = data_dir / "test_en_wo_anno.json"
         dev_path = data_dir / "dev_en.json"
 
     if not os.path.isfile(test_path):
@@ -162,7 +182,8 @@ def prepare_data(data_dir, language):
 def main(_):
     trainer = Trainer()
     _, model_path = trainer.train()
-    trainer.validate(model_path)
+    trainer.validate(model_path, mode="validate")
+    trainer.validate(model_path, mode="test")
 
 
 if __name__ == '__main__':

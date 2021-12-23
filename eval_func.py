@@ -259,7 +259,7 @@ def pred_to_submission(inputs, model, task, output_file, write_to_file=True):
             }
             submission.append(submission_format)
             count += 1
-            print("Predicting ", count, " / 300 dialogues...")
+            print("Predicting ", count, "th dialogues...")
 
     if write_to_file:
         with open(output_file, 'w') as f:
