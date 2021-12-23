@@ -237,7 +237,8 @@ class QualitySoftmax(layers.Layer):
 
         score_inputs = tf.stack([quality_logits, quality_labels], axis=1)
 
-        batch_accuracy = tf.map_fn(get_score, score_inputs, fn_output_signature=tf.TensorSpec(shape=(3), dtype=tf.float32))
+        batch_accuracy = tf.map_fn(get_score, score_inputs,
+                                   fn_output_signature=tf.TensorSpec(shape=(3), dtype=tf.float32))
 
         scores = -tf.experimental.numpy.log2(tf.reduce_mean(batch_accuracy, axis=0))
 
@@ -246,6 +247,7 @@ class QualitySoftmax(layers.Layer):
         self.add_metric(scores[2], name="nmd_S")
 
         return quality_probs
+
 
 # bert and return the top_vec
 class Bert(layers.Layer):
@@ -427,8 +429,13 @@ def create_dialogue_model(plm_name, language, max_turn_number, task, embedding_s
 
         opt = tf.keras.optimizers.Adam(beta_1=0.9, beta_2=0.98, lr=1e-5)
 
+        # warm up opt
+        learning_rate = CustomSchedule(d_model=768, warmup_steps=4000)
+        optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98,
+                                             epsilon=1e-9)
+
         model = tf.keras.Model(inputs=inputs, outputs=outputs, name="dialogue_nugget")
-        model.compile(optimizer=opt, run_eagerly=True)
+        model.compile(optimizer=optimizer, run_eagerly=True)
 
         return model
 
@@ -465,7 +472,13 @@ def create_dialogue_model(plm_name, language, max_turn_number, task, embedding_s
 
         outputs = quality_probs
         opt = tf.keras.optimizers.Adam(beta_1=0.9, beta_2=0.98, lr=1e-5)
+
+        # warm up opt
+        learning_rate = CustomSchedule(d_model=768, warmup_steps=4000)
+        optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98,
+                                             epsilon=1e-9)
+
         model = tf.keras.Model(inputs=inputs, outputs=outputs, name="dialogue_quality")
-        model.compile(optimizer=opt, run_eagerly=True)
+        model.compile(optimizer=optimizer, run_eagerly=True)
 
         return model
