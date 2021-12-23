@@ -104,6 +104,7 @@ def evaluate_nugget(id2pred, id2truth, alpha=.5, strict=True):
         dialogue_scores = []
 
         for idx, prediction in id2pred.items():
+
             truth = id2truth[idx]
             prediction = prediction["nugget"]
             is_customer = [t["sender"] == "customer" for t in truth["turns"]]
@@ -127,7 +128,13 @@ def evaluate_nugget(id2pred, id2truth, alpha=.5, strict=True):
                 else:
                     h_turns_scores.append(score)
 
-            dialogue_scores.append(np.mean(c_turns_scores) * alpha + np.mean(h_turns_scores) * (1 - alpha))
+            if not c_turns_scores:
+                dialogue_scores.append(np.mean(h_turns_scores))
+
+            elif not h_turns_scores:
+                dialogue_scores.append(np.mean(c_turns_scores))
+            else:
+                dialogue_scores.append(np.mean(c_turns_scores) * alpha + np.mean(h_turns_scores) * (1 - alpha))
 
         return -log2(np.mean(dialogue_scores))
 
