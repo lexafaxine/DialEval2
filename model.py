@@ -435,7 +435,7 @@ def create_dialogue_model(plm_name, language, max_turn_number, task, embedding_s
                                              epsilon=1e-9)
 
         model = tf.keras.Model(inputs=inputs, outputs=outputs, name="dialogue_nugget")
-        model.compile(optimizer=optimizer, run_eagerly=True)
+        model.compile(optimizer=opt, run_eagerly=True)
 
         return model
 
@@ -479,6 +479,6 @@ def create_dialogue_model(plm_name, language, max_turn_number, task, embedding_s
                                              epsilon=1e-9)
 
         model = tf.keras.Model(inputs=inputs, outputs=outputs, name="dialogue_quality")
-        model.compile(optimizer=optimizer, run_eagerly=True)
+        model.compile(optimizer=opt, run_eagerly=True)
 
         return model
