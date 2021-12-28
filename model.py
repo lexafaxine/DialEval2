@@ -245,7 +245,7 @@ class QualitySoftmax(layers.Layer):
         self.add_metric(scores[0], name="nmd_A")
         self.add_metric(scores[1], name="nmd_E")
         self.add_metric(scores[2], name="nmd_S")
-
+        self.add_metric((scores[0] + scores[1] + scores[2]) / 3., name="mean_nmd")
         return quality_probs
 
 

@@ -75,7 +75,7 @@ class Trainer(object):
                                                           save_best_only=True, mode="max")
         else:
             callback = tf.keras.callbacks.ModelCheckpoint(filepath=model_path, save_weights_only=True,
-                                                          verbose=1, monitor="val_nmd_A",
+                                                          verbose=1, monitor="val_mean_nmd",
                                                           save_best_only=True, mode="max")
         tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
         train_steps = (4090 // FLAGS.batch_size) + 1
