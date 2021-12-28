@@ -427,7 +427,7 @@ def create_dialogue_model(plm_name, language, max_turn_number, task, embedding_s
 
         outputs = [customer_probs, helpdesk_probs]
 
-        opt = tf.keras.optimizers.Adam(beta_1=0.9, beta_2=0.98, lr=1e-5)
+        opt = tf.keras.optimizers.Adam(beta_1=0.9, beta_2=0.98, lr=2e-5)
 
         # warm up opt
         learning_rate = CustomSchedule(d_model=768, warmup_steps=4000)
@@ -471,7 +471,7 @@ def create_dialogue_model(plm_name, language, max_turn_number, task, embedding_s
         quality_probs = quality_softmax(softmax_inputs)
 
         outputs = quality_probs
-        opt = tf.keras.optimizers.Adam(beta_1=0.9, beta_2=0.98, lr=1e-5)
+        opt = tf.keras.optimizers.Adam(beta_1=0.9, beta_2=0.98, lr=2e-5)
 
         # warm up opt
         learning_rate = CustomSchedule(d_model=768, warmup_steps=4000)
